@@ -9,7 +9,9 @@ dist/
 web-build/
 expo-env.d.ts
 
-# Native
+# Native & Build outputs
+**/build/
+.gradle/
 .kotlin/
 *.orig.*
 *.jks
@@ -17,6 +19,8 @@ expo-env.d.ts
 *.p12
 *.key
 *.mobileprovision
+*.class
+*.dex
 
 # Metro
 .metro-health-check*
