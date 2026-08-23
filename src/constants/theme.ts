@@ -1,40 +1,56 @@
-/**
- * Below are the colors that are used in the app. The colors are defined in the light and dark mode.
- * There are many other ways to style your app. For example, [Nativewind](https://www.nativewind.dev/), [Tamagui](https://tamagui.dev/), [unistyles](https://reactnativeunistyles.vercel.app), etc.
- */
-
-import '@/global.css';
-
 import { Platform } from 'react-native';
 
 export const Colors = {
   light: {
-    text: '#000000',
-    background: '#ffffff',
-    backgroundElement: '#F0F0F3',
-    backgroundSelected: '#E0E1E6',
-    textSecondary: '#60646C',
+    text: '#0F172A',
+    textSecondary: '#475569',
+    textMuted: '#94A3B8',
+    background: '#EEF2F6', // More distinct, crisp background that makes white cards pop
+    backgroundElement: '#FFFFFF',
+    backgroundSelected: '#E2E8F0',
+    border: '#E2E8F0',
+    primary: '#2563EB',
+    primaryMuted: '#EFF6FF',
+    accent: '#0284C7',
+    success: '#10B981',
+    successMuted: '#ECFDF5',
+    warning: '#F59E0B',
+    warningMuted: '#FFFBEB',
+    danger: '#EF4444',
+    dangerMuted: '#FEF2F2',
+    card: '#FFFFFF',
+    shadow: '#0F172A',
   },
   dark: {
-    text: '#ffffff',
-    background: '#000000',
-    backgroundElement: '#212225',
-    backgroundSelected: '#2E3135',
-    textSecondary: '#B0B4BA',
+    text: '#F8FAFC',
+    textSecondary: '#94A3B8',
+    textMuted: '#64748B',
+    background: '#0B0F19',
+    backgroundElement: '#161F30',
+    backgroundSelected: '#223048',
+    border: '#1E293B',
+    primary: '#38BDF8',
+    primaryMuted: '#0C4A6E40',
+    accent: '#60A5FA',
+    success: '#34D399',
+    successMuted: '#064E3B40',
+    warning: '#FBBF24',
+    warningMuted: '#78350F40',
+    danger: '#F87171',
+    dangerMuted: '#7F1D1D40',
+    card: '#161F30',
+    shadow: '#000000',
   },
 } as const;
 
-export type ThemeColor = keyof typeof Colors.light & keyof typeof Colors.dark;
+export type ThemeColors = (typeof Colors)[keyof typeof Colors];
+export type ThemeColor = keyof typeof Colors.light;
 
 export const Fonts = Platform.select({
   ios: {
-    /** iOS `UIFontDescriptorSystemDesignDefault` */
     sans: 'system-ui',
-    /** iOS `UIFontDescriptorSystemDesignSerif` */
     serif: 'ui-serif',
-    /** iOS `UIFontDescriptorSystemDesignRounded` */
     rounded: 'ui-rounded',
-    /** iOS `UIFontDescriptorSystemDesignMonospaced` */
     mono: 'ui-monospace',
   },
   default: {
@@ -42,12 +58,6 @@ export const Fonts = Platform.select({
     serif: 'serif',
     rounded: 'normal',
     mono: 'monospace',
-  },
-  web: {
-    sans: 'var(--font-display)',
-    serif: 'var(--font-serif)',
-    rounded: 'var(--font-rounded)',
-    mono: 'var(--font-mono)',
   },
 });
 
