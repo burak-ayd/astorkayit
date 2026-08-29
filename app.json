@@ -16,7 +16,7 @@
       }
     },
     "android": {
-      "package": "com.burakaydogan.AstorKayit",
+      "package": "tr.net.burakaydogan.astorkayit",
       "adaptiveIcon": {
         "backgroundColor": "#E6F4FE",
         "foregroundImage": "./assets/images/ic_launcher_foreground.png",
