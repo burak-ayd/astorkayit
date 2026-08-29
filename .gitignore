@@ -17,10 +17,13 @@ expo-env.d.ts
 *.jks
 *.p8
 *.p12
+*.keystore
 *.key
 *.mobileprovision
 *.class
 *.dex
+
+.last_variant
 
 # Metro
 .metro-health-check*
@@ -45,3 +48,7 @@ example
 # generated native folders
 /ios
 /android
+
+# local-expo-build
+keystore.properties
+credentials.json

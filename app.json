@@ -1,8 +1,8 @@
 {
   "expo": {
     "name": "Astor Kayıt",
-    "slug": "Astor-Kayit",
-    "version": "1.0.0",
+    "slug": "astor-kayit",
+    "version": "1.0.6",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
     "scheme": "astorkayit",
@@ -61,11 +61,24 @@
         }
       ],
       "expo-sqlite",
-      "@react-native-community/datetimepicker"
+      "@react-native-community/datetimepicker",
+      "./scripts/withSplitApk.js",
+      "./scripts/withGradleJvmArgs.js",
+      "./scripts/withCustomApkName.js",
+      "./scripts/withFileProvider.js"
     ],
     "experiments": {
       "typedRoutes": true,
       "reactCompiler": true
-    }
+    },
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "8b6e4a0b-d4ae-4225-8cdd-0d67c1a8c2f2"
+      },
+      "variant": "production",
+      "apiUrl": "https://api.example.com"
+    },
+    "owner": "darkpuye"
   }
 }
