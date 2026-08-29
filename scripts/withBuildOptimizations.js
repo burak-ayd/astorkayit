@@ -37,25 +37,6 @@ android {
         }
     }
 }
-
-// res/ altındaki gereksiz fontları derleme anında temizleyen görev
-afterEvaluate {
-    tasks.matching { it.name.startsWith("merge") && it.name.endsWith("Resources") }.configureEach { mergeTask ->
-        mergeTask.doLast {
-            // Raw ve Font klasörlerindeki kullanılmayan vector icon fontlarını temizle
-            def targetDir = mergeTask.outputDir.asFile.orNull ?: mergeTask.outputDir.get().asFile
-            if (targetDir && targetDir.exists()) {
-                fileTree(dir: targetDir).matching {
-                    // Sadece MaterialIcons.ttf kalsın, diğer vector-icons fontlarını sil
-                    include "**/font*/*.ttf", "**/raw*/*.ttf"
-                    exclude "**/materialicons*.ttf", "**/MaterialIcons*.ttf"
-                }.each { file ->
-                    file.delete()
-                }
-            }
-        }
-    }
-}
 // --- Expo Build Optimizations End ---
 `;
 			contents += `\n${optimizationBlock}`;
