@@ -1,5 +1,5 @@
 import { Image } from 'expo-image';
-import { MaterialIcons } from '@expo/vector-icons';
+import MaterialIcons from "@react-native-vector-icons/material-icons/static";
 import React from 'react';
 import { Pressable, ScrollView, StyleSheet, View } from 'react-native';
 

@@ -62,6 +62,7 @@
       ],
       "expo-sqlite",
       "@react-native-community/datetimepicker",
+      "expo-font",
       "./scripts/withSplitApk.js",
       "./scripts/withGradleJvmArgs.js",
       "./scripts/withCustomApkName.js",
