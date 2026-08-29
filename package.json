@@ -1,7 +1,7 @@
 {
 	"name": "astorkayitapp",
 	"main": "expo-router/entry",
-	"version": "1.0.6",
+	"version": "1.0.0",
 	"dependencies": {
 		"@expo/ui": "~57.0.12",
 		"@expo/vector-icons": "^15.0.2",
@@ -47,10 +47,10 @@
 		"build:android:aab": "node scripts/build.js aab",
 		"android:dev": "cross-env APP_VARIANT=development node scripts/run-android.js",
 		"android:preview": "cross-env APP_VARIANT=preview node scripts/run-android.js",
-		"android:prod": "cross-env APP_VARIANT=production node scripts/run-android.js",
+		"android:prod": "cross-env APP_VARIANT=release node scripts/run-android.js",
 		"build:dev": "cross-env APP_VARIANT=development node scripts/build.js apk",
 		"build:preview": "cross-env APP_VARIANT=preview node scripts/build.js apk",
-		"build:release": "cross-env APP_VARIANT=production node scripts/build.js apk"
+		"build:release": "cross-env APP_VARIANT=release node scripts/build.js apk"
 	},
 	"private": true
 }

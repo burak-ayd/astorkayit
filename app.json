@@ -2,7 +2,7 @@
   "expo": {
     "name": "Astor Kayıt",
     "slug": "astor-kayit",
-    "version": "1.0.6",
+    "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
     "scheme": "astorkayit",
@@ -65,7 +65,8 @@
       "./scripts/withSplitApk.js",
       "./scripts/withGradleJvmArgs.js",
       "./scripts/withCustomApkName.js",
-      "./scripts/withFileProvider.js"
+      "./scripts/withFileProvider.js",
+      "./scripts/withBuildOptimizations.js"
     ],
     "experiments": {
       "typedRoutes": true,
