@@ -113,7 +113,7 @@ export async function initNotifications() {
 	}
 }
 
-export interface TaskNotificationPayload {
+export interface TaskNotificationPayload extends Record<string, unknown> {
 	title: string;
 	body: string;
 	alertTitle: string;
@@ -153,7 +153,7 @@ export function setupNotificationResponseListener() {
 	const subscription =
 		Notifications.addNotificationResponseReceivedListener((response) => {
 			const data = response.notification.request.content
-				.data as TaskNotificationPayload;
+				.data as unknown as TaskNotificationPayload;
 			if (!data || !data.alertTitle) return;
 
 			if (data.actionType === "zip_export" && data.zipPath) {

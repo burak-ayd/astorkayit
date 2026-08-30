@@ -146,7 +146,7 @@ export function CustomAlertModal() {
 										btn.style === "destructive" ||
 										(type === "danger" && !isCancel);
 
-									let btnBg = theme.primary;
+									let btnBg: string = theme.primary;
 									let textColor = "#ffffff";
 
 									if (isCancel) {
