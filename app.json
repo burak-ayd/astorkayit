@@ -41,17 +41,6 @@
       "expo-router",
       "expo-notifications",
       "expo-background-task",
-      "./withForegroundService.js",
-      [
-        "expo-build-properties",
-        {
-          "android": {
-            "extraMavenRepos": [
-              "../node_modules/@notifee/react-native/android/libs"
-            ]
-          }
-        }
-      ],
       [
         "expo-splash-screen",
         {

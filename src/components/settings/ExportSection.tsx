@@ -43,27 +43,6 @@ export function ExportSection({
 				const alertTitle = "ZIP Arşivi Hazır";
 				const alertMessage = `Toplam ${records.length} kayıt, tüm fotoğraflar ve interaktif HTML görüntüleyici ZIP olarak hazırlandı.\n\nKonum: Backups/${result.zipName}\n\nArşivi şimdi paylaşmak ister misiniz?`;
 
-				showAlert({
-					title: alertTitle,
-					message: alertMessage,
-					type: "success",
-					buttons: [
-						{ text: "Kapat", style: "cancel" },
-						{
-							text: "Paylaş",
-							onPress: async () => {
-								if (MediaStorageModule && result.zipPath) {
-									await MediaStorageModule.shareMediaFiles(
-										[result.zipPath],
-										result.zipName,
-										`Astor Kayıt Tüm Arşiv Yedeği (${records.length} Kayıt)`,
-									);
-								}
-							},
-						},
-					],
-				});
-
 				await sendTaskNotification({
 					title: "ZIP Arşivi Hazır 📦",
 					body: `${records.length} adet kayıt başarıyla paketlendi. Paylaşmak için dokunun.`,

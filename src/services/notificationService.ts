@@ -1,13 +1,13 @@
 import * as Notifications from "expo-notifications";
 import { Platform } from "react-native";
-import notifee, { AndroidColor, AndroidImportance } from "@notifee/react-native";
 
 import { showAlert } from "@/store/useAlertStore";
 import { useSettingsStore } from "@/store/useSettingsStore";
 import MediaStorageModule from "../../modules/my-module/src/MediaStorageModule";
 
 /**
- * Bildirim yöneticisi ön plan davranışını ayarlar
+ * Bildirim yöneticisi: Uygulama ön plandayken üstten rahatsız edici banner düşürmez.
+ * Sadece arka plandayken veya kilitliyken bildirim çekmecesinde sessizce listelenir.
  */
 Notifications.setNotificationHandler({
 	handleNotification: async () => ({
@@ -17,72 +17,6 @@ Notifications.setNotificationHandler({
 		shouldSetBadge: false,
 	}),
 });
-
-// Notifee Foreground Service kaydı (Uygulama açılırken çalışır ve servisin hayatta kalmasını sağlar)
-notifee.registerForegroundService((notification) => {
-	return new Promise(() => {
-		// Bu promise resolve edilene kadar Foreground Service çalışmaya devam eder.
-		// Biz servisi manuel olarak stopForegroundService ile durduracağız.
-	});
-});
-
-export async function startForegroundService(title: string, message: string) {
-	if (Platform.OS !== "android") return;
-	try {
-		const channelId = await notifee.createChannel({
-			id: "sync_channel",
-			name: "Arkaplan İşlemleri",
-			importance: AndroidImportance.LOW,
-		});
-
-		await notifee.displayNotification({
-			id: "sync_notification",
-			title: title,
-			body: message,
-			android: {
-				channelId,
-				asForegroundService: true,
-				color: AndroidColor.BLUE,
-				ongoing: true,
-			},
-		});
-	} catch (e) {
-		console.warn("Foreground service start failed:", e);
-	}
-}
-
-export async function updateForegroundService(title: string, message: string) {
-	if (Platform.OS !== "android") return;
-	try {
-		const channelId = await notifee.createChannel({
-			id: "sync_channel",
-			name: "Arkaplan İşlemleri",
-			importance: AndroidImportance.LOW,
-		});
-
-		await notifee.displayNotification({
-			id: "sync_notification",
-			title: title,
-			body: message,
-			android: {
-				channelId,
-				asForegroundService: true,
-				ongoing: true,
-			},
-		});
-	} catch (e) {
-		console.warn("Foreground service update failed:", e);
-	}
-}
-
-export async function stopForegroundService() {
-	if (Platform.OS !== "android") return;
-	try {
-		await notifee.stopForegroundService();
-	} catch (e) {
-		console.warn("Foreground service stop failed:", e);
-	}
-}
 
 /**
  * Android için yüksek öncelikli bildirim kanalı oluşturur
@@ -99,7 +33,8 @@ export async function initNotifications() {
 			});
 		}
 
-		const { status: existingStatus } = await Notifications.getPermissionsAsync();
+		const { status: existingStatus } =
+			await Notifications.getPermissionsAsync();
 		let finalStatus = existingStatus;
 		if (existingStatus !== "granted") {
 			const { status } = await Notifications.requestPermissionsAsync();
@@ -125,7 +60,9 @@ export interface TaskNotificationPayload extends Record<string, unknown> {
 }
 
 /**
- * İşlem bittiğinde yerel bildirim gönderir
+ * İşlem bittiğinde bildirim gönderir.
+ * Sadece uygulama arka plandayken bildirim merkezine gönderilir, böylece
+ * bildirim çubuğundan dokunulduğunda doğrudan Alert açılır.
  */
 export async function sendTaskNotification(payload: TaskNotificationPayload) {
 	const notificationsEnabled =
@@ -150,8 +87,8 @@ export async function sendTaskNotification(payload: TaskNotificationPayload) {
  * Bildirime tıklandığında ilgili Alert popup'ını açan dinleyiciyi kurar
  */
 export function setupNotificationResponseListener() {
-	const subscription =
-		Notifications.addNotificationResponseReceivedListener((response) => {
+	const subscription = Notifications.addNotificationResponseReceivedListener(
+		(response) => {
 			const data = response.notification.request.content
 				.data as unknown as TaskNotificationPayload;
 			if (!data || !data.alertTitle) return;
@@ -184,7 +121,8 @@ export function setupNotificationResponseListener() {
 					type: data.alertType || "info",
 				});
 			}
-		});
+		},
+	);
 
 	return () => subscription.remove();
 }

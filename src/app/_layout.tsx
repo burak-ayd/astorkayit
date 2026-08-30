@@ -19,6 +19,7 @@ import {
   setupNotificationResponseListener,
 } from '@/services/notificationService';
 import '@/services/backgroundSyncService';
+import 'expo-blob';
 
 export default function RootLayout() {
   const theme = useTheme();

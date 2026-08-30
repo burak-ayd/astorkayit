@@ -622,5 +622,38 @@ class MediaStorageModule : Module() {
         promise.reject("ZIP_EXPORT_FAILED", e.message, e)
       }
     }
+
+    AsyncFunction("startSyncForegroundService") { title: String, message: String, promise: Promise ->
+      try {
+        val context = appContext.reactContext ?: appContext.currentActivity ?: throw Exception("Context not found")
+        SyncForegroundService.start(context, title, message)
+        promise.resolve(true)
+      } catch (e: Exception) {
+        Log.e(TAG, "startSyncForegroundService failed: ${e.message}", e)
+        promise.resolve(false)
+      }
+    }
+
+    AsyncFunction("updateSyncForegroundService") { title: String, message: String, progress: Int, max: Int, promise: Promise ->
+      try {
+        val context = appContext.reactContext ?: appContext.currentActivity ?: throw Exception("Context not found")
+        SyncForegroundService.update(context, title, message, progress, max)
+        promise.resolve(true)
+      } catch (e: Exception) {
+        Log.e(TAG, "updateSyncForegroundService failed: ${e.message}", e)
+        promise.resolve(false)
+      }
+    }
+
+    AsyncFunction("stopSyncForegroundService") { promise: Promise ->
+      try {
+        val context = appContext.reactContext ?: appContext.currentActivity ?: throw Exception("Context not found")
+        SyncForegroundService.stop(context)
+        promise.resolve(true)
+      } catch (e: Exception) {
+        Log.e(TAG, "stopSyncForegroundService failed: ${e.message}", e)
+        promise.resolve(false)
+      }
+    }
   }
 }

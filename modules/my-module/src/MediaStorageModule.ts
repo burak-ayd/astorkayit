@@ -54,6 +54,14 @@ declare class MediaStorageModuleType extends NativeModule<{}> {
     jsonContent: string,
     folderRelativePaths: string[]
   ): Promise<{ path: string; name: string; size: number; success: boolean }>;
+  startSyncForegroundService(title: string, message: string): Promise<boolean>;
+  updateSyncForegroundService(
+    title: string,
+    message: string,
+    progress: number,
+    max: number
+  ): Promise<boolean>;
+  stopSyncForegroundService(): Promise<boolean>;
 }
 
 // Try to load the native module, return null if not available (e.g. Expo Go)

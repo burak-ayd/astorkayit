@@ -240,27 +240,6 @@ export default function HomeScreen() {
 				const alertTitle = "ZIP Arşivi Hazır";
 				const alertMessage = `${selectedRecords.length} adet kayıt, fotoğraflar ve interaktif HTML görüntüleyici ZIP olarak arşivlendi.\n\nDosyayı şimdi paylaşmak ister misiniz?`;
 
-				showAlert({
-					title: alertTitle,
-					message: alertMessage,
-					type: "success",
-					buttons: [
-						{ text: "Kapat", style: "cancel" },
-						{
-							text: "Paylaş",
-							onPress: async () => {
-								if (MediaStorageModule && result.zipPath) {
-									await MediaStorageModule.shareMediaFiles(
-										[result.zipPath],
-										result.zipName,
-										`Astor Kayıtları Arşivi (${selectedRecords.length} Kayıt)`,
-									);
-								}
-							},
-						},
-					],
-				});
-
 				await sendTaskNotification({
 					title: "ZIP Arşivi Hazır 📦",
 					body: `${selectedRecords.length} adet kayıt başarıyla arşivlendi. Paylaşmak için dokunun.`,

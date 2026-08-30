@@ -1,7 +1,6 @@
 import type { RecordItem } from '@/types';
 import { getRecordFolderName } from '@/database/db';
 import MediaStorageModule from '../../modules/my-module/src/MediaStorageModule';
-import { startForegroundService, stopForegroundService } from '@/services/notificationService';
 
 /**
  * Generates an interactive, standalone HTML viewer containing records and photos.
@@ -801,8 +800,6 @@ export async function exportRecordsToZip(
       throw new Error('Native modül bulunamadı');
     }
 
-    await startForegroundService("ZIP Arşivi", "Kayıtlar sıkıştırılıyor...");
-
     // Generate unique name: astor_kayit_export_YYYY_MM_DD_HH_mm_ss.zip
     const now = new Date();
     const dateStr = now.toISOString().replace(/T/, '_').replace(/:/g, '-').split('.')[0];
@@ -815,6 +812,13 @@ export async function exportRecordsToZip(
 
     // Folders to include: Files/record_<id>_<title>
     const folderRelativePaths = records.map((r) => `Files/${getRecordFolderName(r.id, r.title)}`);
+
+    if (MediaStorageModule) {
+      await MediaStorageModule.startSyncForegroundService(
+        'ZIP Arşivi Paketleniyor 📦',
+        `${records.length} kayıt ve fotoğraflar sıkıştırılıyor...`
+      );
+    }
 
     const result = await MediaStorageModule.createZipExport(
       zipRelativePath,
@@ -836,6 +840,12 @@ export async function exportRecordsToZip(
       error: String(error),
     };
   } finally {
-    await stopForegroundService();
+    if (MediaStorageModule) {
+      try {
+        await MediaStorageModule.stopSyncForegroundService();
+      } catch (e) {
+        console.warn('Foreground service durdurulamadı:', e);
+      }
+    }
   }
 }

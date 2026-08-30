@@ -88,20 +88,7 @@ export function DriveSettingsSection({
 	const handleManualDriveSync = async () => {
 		if (!isDriveConnected) return;
 		try {
-			const res = await syncNow(records);
-			if (res.success) {
-				showAlert({
-					title: "Senkronizasyon Başarılı",
-					message: `${res.uploadedCount} adet kayıt ve tüm fotoğrafları Google Drive ile eşitlendi.`,
-					type: "success",
-				});
-			} else {
-				showAlert({
-					title: "Senkronizasyon Uyarısı",
-					message: res.error || "Yedekleme tamamlanamadı.",
-					type: "warning",
-				});
-			}
+			await syncNow(records);
 		} catch (e) {
 			showAlert({
 				title: "Senkronizasyon Hatası",

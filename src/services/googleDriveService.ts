@@ -1,11 +1,7 @@
 import { getRecordFolderName } from "@/database/db";
 import type { RecordItem } from "@/types";
 import { generateExportHtml } from "@/utils/zipExport";
-import {
-	startForegroundService,
-	updateForegroundService,
-	stopForegroundService,
-} from "@/services/notificationService";
+import * as FileSystem from "expo-file-system/legacy";
 import * as Network from "expo-network";
 import {
 	GoogleOneTapSignIn,
@@ -337,41 +333,50 @@ export async function uploadMediaFileToDrive(
 	else if (lower.endsWith(".webp")) mimeType = "image/webp";
 	else if (lower.endsWith(".mp4")) mimeType = "video/mp4";
 
-	const fileRes = await fetch(uri);
-	const blob = await fileRes.blob();
-
-	const metadata = {
-		name: fileName,
-		parents: [parentFolderId],
-		mimeType,
-	};
-
-	const formData = new FormData();
-	formData.append(
-		"metadata",
-		new Blob([JSON.stringify(metadata)], {
-			type: "application/json; charset=UTF-8",
-		}) as any,
-	);
-	formData.append("file", blob);
-
-	const uploadRes = await fetch(
-		"https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart",
+	// 1. Adım: Google Drive Resumable Upload oturumu başlat
+	const initRes = await fetch(
+		"https://www.googleapis.com/upload/drive/v3/files?uploadType=resumable",
 		{
 			method: "POST",
 			headers: {
 				Authorization: `Bearer ${accessToken}`,
+				"Content-Type": "application/json; charset=UTF-8",
 			},
-			body: formData,
+			body: JSON.stringify({
+				name: fileName,
+				parents: [parentFolderId],
+				mimeType,
+			}),
 		},
 	);
 
-	if (!uploadRes.ok) {
-		const err = await uploadRes.text();
-		throw new Error(`Fotoğraf yüklenemedi (${fileName}): ${err}`);
+	if (!initRes.ok) {
+		const err = await initRes.text();
+		throw new Error(`Google Drive yükleme oturumu başlatılamadı (${fileName}): ${err}`);
 	}
 
-	return await uploadRes.json();
+	const locationUrl =
+		initRes.headers.get("Location") || initRes.headers.get("location");
+	if (!locationUrl) {
+		throw new Error(`Google Drive yükleme adresi alınamadı (${fileName}).`);
+	}
+
+	// 2. Adım: Expo FileSystem ile dosyayı yerel bellekten doğrudan stream ederek yükle (Blob/Base64 kullanılmaz)
+	const uploadResult = await FileSystem.uploadAsync(locationUrl, uri, {
+		httpMethod: "PUT",
+		headers: {
+			"Content-Type": mimeType,
+		},
+		uploadType: FileSystem.FileSystemUploadType.BINARY_CONTENT,
+	});
+
+	if (uploadResult.status < 200 || uploadResult.status >= 300) {
+		throw new Error(
+			`Fotoğraf yüklenemedi (${fileName}): ${uploadResult.body}`,
+		);
+	}
+
+	return JSON.parse(uploadResult.body);
 }
 
 /**
@@ -433,9 +438,22 @@ export async function syncAllRecordsToDrive(
 		};
 	}
 
+	// Toplam yüklenecek fotoğraf sayısını hesapla
+	let totalPhotos = 0;
+	for (const r of records) {
+		if (r.photos) totalPhotos += r.photos.length;
+	}
+	const totalSteps = totalPhotos + 2; // + index.html, records.json
+	let currentStep = 0;
+
 	try {
-		await startForegroundService("Drive Eşitleme", "Yedekleme hazırlanıyor...");
-		let uploadedPhotos = 0;
+		// Native Foreground Servisi başlat (Ağ kopmasını önler ve bildirimi gösterir)
+		if (MediaStorageModule) {
+			await MediaStorageModule.startSyncForegroundService(
+				"Google Drive Senkronizasyonu ☁️",
+				"Yedekleme hazırlanıyor...",
+			);
+		}
 
 		// 1. Google Drive içinde ana 'AstorKayit' klasörünü oluştur/bul
 		const rootFolderId = await getOrCreateDriveFolder(
@@ -450,8 +468,6 @@ export async function syncAllRecordsToDrive(
 			rootFolderId,
 		);
 
-		await updateForegroundService("Drive Eşitleme", "HTML/JSON yükleniyor...");
-
 		// 3. 'index.html' interaktif HTML görüntüleyiciyi yükle/güncelle
 		const htmlContent = generateExportHtml(
 			records,
@@ -464,6 +480,15 @@ export async function syncAllRecordsToDrive(
 			htmlContent,
 			rootFolderId,
 		);
+		currentStep++;
+		if (MediaStorageModule) {
+			await MediaStorageModule.updateSyncForegroundService(
+				"Google Drive Senkronizasyonu ☁️",
+				"HTML görüntüleyici yüklendi...",
+				currentStep,
+				totalSteps,
+			);
+		}
 
 		// 4. 'records.json' veritabanı JSON yedeğini yükle/güncelle
 		await uploadTextFileToDrive(
@@ -473,8 +498,18 @@ export async function syncAllRecordsToDrive(
 			JSON.stringify(records, null, 2),
 			rootFolderId,
 		);
+		currentStep++;
+		if (MediaStorageModule) {
+			await MediaStorageModule.updateSyncForegroundService(
+				"Google Drive Senkronizasyonu ☁️",
+				"Veritabanı JSON yedeği yüklendi...",
+				currentStep,
+				totalSteps,
+			);
+		}
 
 		// 5. Her kaydın klasörünü (Files/record_<id>_<title>) oluştur ve fotoğraflarını yükle
+		let uploadedPhotoCount = 0;
 		for (const record of records) {
 			const recordFolderName = getRecordFolderName(record.id, record.title);
 			const recordFolderId = await getOrCreateDriveFolder(
@@ -487,11 +522,6 @@ export async function syncAllRecordsToDrive(
 			if (record.photos && record.photos.length > 0) {
 				for (const photoPath of record.photos) {
 					if (!photoPath) continue;
-					uploadedPhotos++;
-					await updateForegroundService(
-						"Drive Eşitleme",
-						`Fotoğraflar yükleniyor (${uploadedPhotos})...`
-					);
 
 					const parts = photoPath.split("/");
 					const fileName = parts[parts.length - 1];
@@ -502,6 +532,17 @@ export async function syncAllRecordsToDrive(
 						fileName,
 						recordFolderId,
 					);
+
+					currentStep++;
+					uploadedPhotoCount++;
+					if (MediaStorageModule) {
+						await MediaStorageModule.updateSyncForegroundService(
+							"Google Drive Senkronizasyonu ☁️",
+							`Fotoğraflar yükleniyor (${uploadedPhotoCount}/${totalPhotos})...`,
+							currentStep,
+							totalSteps,
+						);
+					}
 				}
 			}
 		}
@@ -520,6 +561,12 @@ export async function syncAllRecordsToDrive(
 			syncedAt: new Date().toISOString(),
 		};
 	} finally {
-		await stopForegroundService();
+		if (MediaStorageModule) {
+			try {
+				await MediaStorageModule.stopSyncForegroundService();
+			} catch (e) {
+				console.warn("Foreground service durdurulamadı:", e);
+			}
+		}
 	}
 }
