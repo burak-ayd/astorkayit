@@ -6,17 +6,20 @@ export type ThemeMode = 'system' | 'light' | 'dark';
 interface SettingsState {
   defaultHideFromGallery: boolean;
   themeMode: ThemeMode;
+  notificationsEnabled: boolean;
   isLoading: boolean;
 
   // Actions
   loadSettings: () => Promise<void>;
   setDefaultHideFromGallery: (hide: boolean) => Promise<void>;
   setThemeMode: (mode: ThemeMode) => Promise<void>;
+  setNotificationsEnabled: (enabled: boolean) => Promise<void>;
 }
 
 export const useSettingsStore = create<SettingsState>((set) => ({
   defaultHideFromGallery: false, // Default: visible in gallery (hide = false)
   themeMode: 'system', // Default: system theme
+  notificationsEnabled: true, // Default: enabled
   isLoading: false,
 
   loadSettings: async () => {
@@ -30,6 +33,11 @@ export const useSettingsStore = create<SettingsState>((set) => ({
       const themeSetting = await db.getSetting('theme_mode');
       if (themeSetting === 'light' || themeSetting === 'dark' || themeSetting === 'system') {
         set({ themeMode: themeSetting });
+      }
+
+      const notifSetting = await db.getSetting('notifications_enabled');
+      if (notifSetting !== null) {
+        set({ notificationsEnabled: notifSetting === '1' });
       }
     } catch (e) {
       console.warn('Failed to load settings:', e);
@@ -53,6 +61,15 @@ export const useSettingsStore = create<SettingsState>((set) => ({
       await db.setSetting('theme_mode', mode);
     } catch (e) {
       console.warn('Failed to save theme mode setting:', e);
+    }
+  },
+
+  setNotificationsEnabled: async (enabled: boolean) => {
+    try {
+      set({ notificationsEnabled: enabled });
+      await db.setSetting('notifications_enabled', enabled ? '1' : '0');
+    } catch (e) {
+      console.warn('Failed to save notifications setting:', e);
     }
   },
 }));

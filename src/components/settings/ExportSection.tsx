@@ -4,6 +4,7 @@ import { ActivityIndicator, Pressable, StyleSheet } from "react-native";
 
 import { ThemedText } from "@/components/themed-text";
 import { useTheme } from "@/hooks/use-theme";
+import { sendTaskNotification } from "@/services/notificationService";
 import { showAlert } from "@/store/useAlertStore";
 import { useRecordStore } from "@/store/useRecordStore";
 import { exportRecordsToZip } from "@/utils/zipExport";
@@ -39,9 +40,12 @@ export function ExportSection({
 			);
 
 			if (result.success && result.zipPath) {
+				const alertTitle = "ZIP Arşivi Hazır";
+				const alertMessage = `Toplam ${records.length} kayıt, tüm fotoğraflar ve interaktif HTML görüntüleyici ZIP olarak hazırlandı.\n\nKonum: Backups/${result.zipName}\n\nArşivi şimdi paylaşmak ister misiniz?`;
+
 				showAlert({
-					title: "ZIP Arşivi Hazır",
-					message: `Toplam ${records.length} kayıt, tüm fotoğraflar ve interaktif HTML görüntüleyici ZIP olarak hazırlandı.\n\nKonum: Backups/${result.zipName}\n\nArşivi şimdi paylaşmak ister misiniz?`,
+					title: alertTitle,
+					message: alertMessage,
 					type: "success",
 					buttons: [
 						{ text: "Kapat", style: "cancel" },
@@ -58,6 +62,17 @@ export function ExportSection({
 							},
 						},
 					],
+				});
+
+				await sendTaskNotification({
+					title: "ZIP Arşivi Hazır 📦",
+					body: `${records.length} adet kayıt başarıyla paketlendi. Paylaşmak için dokunun.`,
+					alertTitle,
+					alertMessage,
+					alertType: "success",
+					actionType: "zip_export",
+					zipPath: result.zipPath,
+					zipName: result.zipName,
 				});
 			} else {
 				showAlert({

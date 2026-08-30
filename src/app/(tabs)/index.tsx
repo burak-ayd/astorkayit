@@ -20,6 +20,7 @@ import { ThemedText } from "@/components/themed-text";
 import { ThemedView } from "@/components/themed-view";
 import { Spacing } from "@/constants/theme";
 import { useTheme } from "@/hooks/use-theme";
+import { sendTaskNotification } from "@/services/notificationService";
 import { showAlert } from "@/store/useAlertStore";
 import { selectFilteredRecords, useRecordStore } from "@/store/useRecordStore";
 import { exportRecordsToZip } from "@/utils/zipExport";
@@ -236,9 +237,12 @@ export default function HomeScreen() {
 			);
 
 			if (result.success && result.zipPath) {
+				const alertTitle = "ZIP Arşivi Hazır";
+				const alertMessage = `${selectedRecords.length} adet kayıt, fotoğraflar ve interaktif HTML görüntüleyici ZIP olarak arşivlendi.\n\nDosyayı şimdi paylaşmak ister misiniz?`;
+
 				showAlert({
-					title: "ZIP Arşivi Hazır",
-					message: `${selectedRecords.length} adet kayıt, fotoğraflar ve interaktif HTML görüntüleyici ZIP olarak arşivlendi.\n\nDosyayı şimdi paylaşmak ister misiniz?`,
+					title: alertTitle,
+					message: alertMessage,
 					type: "success",
 					buttons: [
 						{ text: "Kapat", style: "cancel" },
@@ -256,6 +260,18 @@ export default function HomeScreen() {
 						},
 					],
 				});
+
+				await sendTaskNotification({
+					title: "ZIP Arşivi Hazır 📦",
+					body: `${selectedRecords.length} adet kayıt başarıyla arşivlendi. Paylaşmak için dokunun.`,
+					alertTitle,
+					alertMessage,
+					alertType: "success",
+					actionType: "zip_export",
+					zipPath: result.zipPath,
+					zipName: result.zipName,
+				});
+
 				setSelectedIds([]);
 			} else {
 				showAlert({

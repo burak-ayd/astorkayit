@@ -29,12 +29,29 @@
         "android.permission.CAMERA",
         "android.permission.RECORD_AUDIO",
         "android.permission.READ_MEDIA_IMAGES",
-        "android.permission.READ_MEDIA_VIDEO"
+        "android.permission.READ_MEDIA_VIDEO",
+        "android.permission.POST_NOTIFICATIONS",
+        "android.permission.FOREGROUND_SERVICE",
+        "android.permission.FOREGROUND_SERVICE_DATA_SYNC",
+        "android.permission.WAKE_LOCK"
       ],
       "predictiveBackGestureEnabled": false
     },
     "plugins": [
       "expo-router",
+      "expo-notifications",
+      "expo-background-task",
+      "./withForegroundService.js",
+      [
+        "expo-build-properties",
+        {
+          "android": {
+            "extraMavenRepos": [
+              "../node_modules/@notifee/react-native/android/libs"
+            ]
+          }
+        }
+      ],
       [
         "expo-splash-screen",
         {

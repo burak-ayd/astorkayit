@@ -26,6 +26,17 @@ export function AppearanceSection() {
 		await setThemeMode(mode);
 	};
 
+	const notificationsEnabled = useSettingsStore(
+		(s) => s.notificationsEnabled,
+	);
+	const setNotificationsEnabled = useSettingsStore(
+		(s) => s.setNotificationsEnabled,
+	);
+
+	const handleToggleNotifications = async (val: boolean) => {
+		await setNotificationsEnabled(val);
+	};
+
 	return (
 		<>
 			{/* Segmented Theme Picker */}
@@ -147,7 +158,7 @@ export function AppearanceSection() {
 				</Pressable>
 			</View>
 
-			{/* Gallery Visibility */}
+			{/* Task Notifications Toggle */}
 			<View
 				style={[
 					styles.optionRow,
@@ -156,6 +167,65 @@ export function AppearanceSection() {
 						borderTopWidth: 1,
 						paddingTop: Spacing.three,
 						marginTop: Spacing.one,
+					},
+				]}>
+				<View
+					style={[
+						styles.optionIconBox,
+						{
+							backgroundColor: notificationsEnabled
+								? theme.primaryMuted
+								: theme.backgroundSelected,
+						},
+					]}>
+					<MaterialIcons
+						name={
+							notificationsEnabled
+								? "notifications-active"
+								: "notifications-off"
+						}
+						size={20}
+						color={
+							notificationsEnabled
+								? theme.primary
+								: theme.textSecondary
+						}
+					/>
+				</View>
+				<View style={styles.optionTextWrap}>
+					<ThemedText type="smallBold">
+						İşlem Bildirimleri
+					</ThemedText>
+					<ThemedText
+						type="small"
+						style={[
+							styles.optionDesc,
+							{ color: theme.textSecondary },
+						]}>
+						{notificationsEnabled
+							? "Drive yükleme ve ZIP arşivi tamamlandığında bildirim gönderilir."
+							: "Kapalı (Arka plan bildirimleri gönderilmez)."}
+					</ThemedText>
+				</View>
+				<Switch
+					value={notificationsEnabled}
+					onValueChange={handleToggleNotifications}
+					trackColor={{
+						false: theme.border,
+						true: theme.primary,
+					}}
+					thumbColor="#ffffff"
+				/>
+			</View>
+
+			{/* Gallery Visibility */}
+			<View
+				style={[
+					styles.optionRow,
+					{
+						borderTopColor: theme.border,
+						borderTopWidth: 1,
+						paddingTop: Spacing.three,
 					},
 				]}>
 				<View

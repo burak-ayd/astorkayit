@@ -1,6 +1,11 @@
 import { getRecordFolderName } from "@/database/db";
 import type { RecordItem } from "@/types";
 import { generateExportHtml } from "@/utils/zipExport";
+import {
+	startForegroundService,
+	updateForegroundService,
+	stopForegroundService,
+} from "@/services/notificationService";
 import * as Network from "expo-network";
 import {
 	GoogleOneTapSignIn,
@@ -8,6 +13,7 @@ import {
 	isNoSavedCredentialFoundResponse,
 	isSuccessResponse,
 } from "react-native-nitro-google-signin";
+import MediaStorageModule from "../../modules/my-module/src/MediaStorageModule";
 
 // Drive API için gerekli izin kapsamı
 const DRIVE_SCOPE = "https://www.googleapis.com/auth/drive.file";
@@ -107,6 +113,25 @@ export async function authenticateWithGoogle(
 }
 
 /**
+ * Geçerli / yenilenmiş accessToken alır
+ */
+export async function getFreshAccessToken(
+	customWebClientId?: string,
+): Promise<string | null> {
+	try {
+		configureGoogleSignIn(customWebClientId);
+		const tokenResult = await GoogleOneTapSignIn.getTokens();
+		if (tokenResult && tokenResult.accessToken) {
+			return tokenResult.accessToken;
+		}
+		return null;
+	} catch (e) {
+		console.warn("Token yenileme hatası:", e);
+		return null;
+	}
+}
+
+/**
  * Oturumu kapatır
  */
 export async function signOutFromGoogle(): Promise<void> {
@@ -159,14 +184,16 @@ export async function getOrCreateDriveFolder(
 		`name = '${folderName}' and mimeType = 'application/vnd.google-apps.folder'${parentQuery} and trashed = false`,
 	);
 	const listRes = await fetch(
-		`https://www.googleapis.com/drive/v3/files?q=${query}&spaces=drive&fields=files(id, name)`,
+		`https://www.googleapis.com/drive/v3/files?q=${query}&fields=files(id,name)`,
 		{
 			headers: { Authorization: `Bearer ${accessToken}` },
 		},
 	);
 
 	if (!listRes.ok) {
-		throw new Error(`Google Drive klasör araması başarısız (${folderName}).`);
+		const errBody = await listRes.text();
+		console.error(`Google Drive list files error (${folderName}):`, listRes.status, errBody);
+		throw new Error(`Google Drive klasör araması başarısız (${folderName}): HTTP ${listRes.status} ${errBody}`);
 	}
 
 	const listData = await listRes.json();
@@ -193,7 +220,9 @@ export async function getOrCreateDriveFolder(
 	});
 
 	if (!createRes.ok) {
-		throw new Error(`Google Drive klasörü oluşturulamadı (${folderName}).`);
+		const errBody = await createRes.text();
+		console.error(`Google Drive create folder error (${folderName}):`, createRes.status, errBody);
+		throw new Error(`Google Drive klasörü oluşturulamadı (${folderName}): HTTP ${createRes.status} ${errBody}`);
 	}
 
 	const createData = await createRes.json();
@@ -405,6 +434,9 @@ export async function syncAllRecordsToDrive(
 	}
 
 	try {
+		await startForegroundService("Drive Eşitleme", "Yedekleme hazırlanıyor...");
+		let uploadedPhotos = 0;
+
 		// 1. Google Drive içinde ana 'AstorKayit' klasörünü oluştur/bul
 		const rootFolderId = await getOrCreateDriveFolder(
 			accessToken,
@@ -417,6 +449,8 @@ export async function syncAllRecordsToDrive(
 			"Files",
 			rootFolderId,
 		);
+
+		await updateForegroundService("Drive Eşitleme", "HTML/JSON yükleniyor...");
 
 		// 3. 'index.html' interaktif HTML görüntüleyiciyi yükle/güncelle
 		const htmlContent = generateExportHtml(
@@ -453,6 +487,12 @@ export async function syncAllRecordsToDrive(
 			if (record.photos && record.photos.length > 0) {
 				for (const photoPath of record.photos) {
 					if (!photoPath) continue;
+					uploadedPhotos++;
+					await updateForegroundService(
+						"Drive Eşitleme",
+						`Fotoğraflar yükleniyor (${uploadedPhotos})...`
+					);
+
 					const parts = photoPath.split("/");
 					const fileName = parts[parts.length - 1];
 
@@ -479,5 +519,7 @@ export async function syncAllRecordsToDrive(
 			error: String(error),
 			syncedAt: new Date().toISOString(),
 		};
+	} finally {
+		await stopForegroundService();
 	}
 }

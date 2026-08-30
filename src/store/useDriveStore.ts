@@ -4,11 +4,17 @@ import type { RecordItem } from '@/types';
 import {
   authenticateWithGoogle,
   deleteFileFromDrive,
+  getFreshAccessToken,
   getOrCreateDriveFolder,
   GoogleUser,
   syncAllRecordsToDrive,
   SyncResult,
 } from '@/services/googleDriveService';
+import { sendTaskNotification } from '@/services/notificationService';
+import {
+  registerBackgroundSyncTask,
+  unregisterBackgroundSyncTask,
+} from '@/services/backgroundSyncService';
 
 interface DriveState {
   isConnected: boolean;
@@ -68,16 +74,21 @@ export const useDriveStore = create<DriveState>((set, get) => ({
           }
         : null;
 
+      const isAutoSync = autoSync === '1';
       set({
         isConnected,
         user,
         accessToken,
-        autoSyncEnabled: autoSync === '1',
+        autoSyncEnabled: isAutoSync,
         syncOnWifiOnly: wifiOnly !== '0', // default true
         deleteFromDriveOnLocalDelete: deletePolicy === '1',
         lastSyncTime: lastSync || null,
         clientId: customClientId || '',
       });
+
+      if (isConnected && isAutoSync) {
+        await registerBackgroundSyncTask();
+      }
     } catch (e) {
       console.warn('Loading Drive settings failed:', e);
     }
@@ -126,6 +137,7 @@ export const useDriveStore = create<DriveState>((set, get) => ({
         user: null,
         accessToken: null,
       });
+      await unregisterBackgroundSyncTask();
     } catch (e) {
       console.error('Drive disconnect error:', e);
     }
@@ -134,6 +146,11 @@ export const useDriveStore = create<DriveState>((set, get) => ({
   setAutoSync: async (enabled: boolean) => {
     set({ autoSyncEnabled: enabled });
     await db.setSetting('gdrive_auto_sync', enabled ? '1' : '0');
+    if (enabled) {
+      await registerBackgroundSyncTask();
+    } else {
+      await unregisterBackgroundSyncTask();
+    }
   },
 
   setSyncWifiOnly: async (wifiOnly: boolean) => {
@@ -152,13 +169,31 @@ export const useDriveStore = create<DriveState>((set, get) => ({
   },
 
   syncNow: async (records: RecordItem[]) => {
-    const { accessToken, isConnected, syncOnWifiOnly } = get();
+    let { accessToken, isConnected, syncOnWifiOnly } = get();
 
-    if (!isConnected || !accessToken) {
+    if (!isConnected) {
       const errRes: SyncResult = {
         success: false,
         uploadedCount: 0,
         error: 'Google Drive hesabı bağlı değil.',
+        syncedAt: new Date().toISOString(),
+      };
+      set({ lastSyncResult: errRes });
+      return errRes;
+    }
+
+    // Google Play Services üzerinden taze token al
+    const freshToken = await getFreshAccessToken();
+    if (freshToken) {
+      accessToken = freshToken;
+      set({ accessToken: freshToken });
+    }
+
+    if (!accessToken) {
+      const errRes: SyncResult = {
+        success: false,
+        uploadedCount: 0,
+        error: 'Google Drive oturumu geçersiz veya erişim belirteci alınamadı. Lütfen tekrar giriş yapın.',
         syncedAt: new Date().toISOString(),
       };
       set({ lastSyncResult: errRes });
@@ -173,8 +208,26 @@ export const useDriveStore = create<DriveState>((set, get) => ({
         const now = new Date().toISOString();
         await db.setSetting('gdrive_last_sync', now);
         set({ lastSyncTime: now, lastSyncResult: result });
+
+        await sendTaskNotification({
+          title: 'Google Drive Eşitlendi ☁️',
+          body: `${result.uploadedCount} adet anı kaydı ve tüm fotoğrafları Google Drive'a başarıyla yedeklendi.`,
+          alertTitle: 'Senkronizasyon Başarılı',
+          alertMessage: `${result.uploadedCount} adet kayıt ve fotoğrafları Google Drive ile başarıyla eşitlendi.`,
+          alertType: 'success',
+          actionType: 'drive_sync',
+        });
       } else {
         set({ lastSyncResult: result });
+
+        await sendTaskNotification({
+          title: 'Senkronizasyon Uyarısı ⚠️',
+          body: result.error || 'Yedekleme tamamlanamadı.',
+          alertTitle: 'Senkronizasyon Uyarısı',
+          alertMessage: result.error || 'Yedekleme tamamlanamadı.',
+          alertType: 'warning',
+          actionType: 'drive_sync',
+        });
       }
 
       return result;
@@ -186,6 +239,16 @@ export const useDriveStore = create<DriveState>((set, get) => ({
         syncedAt: new Date().toISOString(),
       };
       set({ lastSyncResult: errRes });
+
+      await sendTaskNotification({
+        title: 'Senkronizasyon Hatası ❌',
+        body: String(e),
+        alertTitle: 'Senkronizasyon Hatası',
+        alertMessage: String(e),
+        alertType: 'danger',
+        actionType: 'drive_sync',
+      });
+
       return errRes;
     } finally {
       set({ isSyncing: false });

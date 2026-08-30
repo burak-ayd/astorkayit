@@ -14,6 +14,12 @@ import MediaStorageModule from '../../modules/my-module/src/MediaStorageModule';
 
 import { CustomAlertModal } from '@/components/ui/CustomAlertModal';
 
+import {
+  initNotifications,
+  setupNotificationResponseListener,
+} from '@/services/notificationService';
+import '@/services/backgroundSyncService';
+
 export default function RootLayout() {
   const theme = useTheme();
   const colorScheme = useColorScheme();
@@ -29,6 +35,12 @@ export default function RootLayout() {
   const isCameraGranted = cameraPermission?.granted ?? false;
   const isMediaGranted = mediaPermission?.granted ?? false;
   const allPermissionsGranted = (isCameraGranted && isMediaGranted) || forceShowApp;
+
+  useEffect(() => {
+    initNotifications();
+    const cleanup = setupNotificationResponseListener();
+    return cleanup;
+  }, []);
 
   useEffect(() => {
     if (cameraPermission !== null && mediaPermission !== null) {

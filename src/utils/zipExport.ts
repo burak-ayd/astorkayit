@@ -1,6 +1,7 @@
 import type { RecordItem } from '@/types';
 import { getRecordFolderName } from '@/database/db';
 import MediaStorageModule from '../../modules/my-module/src/MediaStorageModule';
+import { startForegroundService, stopForegroundService } from '@/services/notificationService';
 
 /**
  * Generates an interactive, standalone HTML viewer containing records and photos.
@@ -795,18 +796,18 @@ export async function exportRecordsToZip(
   records: RecordItem[],
   customTitle?: string
 ): Promise<{ success: boolean; zipPath?: string; zipName?: string; zipSize?: number; error?: string }> {
-  if (!MediaStorageModule) {
-    return { success: false, error: 'MediaStorage native module is not available on this platform.' };
-  }
-
-  if (!records || records.length === 0) {
-    return { success: false, error: 'Dışa aktarılacak kayıt bulunamadı.' };
-  }
-
   try {
-    const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-    const zipFileName = `AstorKayit_Yedek_${timestamp}.zip`;
-    const zipRelativePath = `Backups/${zipFileName}`;
+    if (!MediaStorageModule) {
+      throw new Error('Native modül bulunamadı');
+    }
+
+    await startForegroundService("ZIP Arşivi", "Kayıtlar sıkıştırılıyor...");
+
+    // Generate unique name: astor_kayit_export_YYYY_MM_DD_HH_mm_ss.zip
+    const now = new Date();
+    const dateStr = now.toISOString().replace(/T/, '_').replace(/:/g, '-').split('.')[0];
+    const zipName = `astor_kayit_export_${dateStr}.zip`;
+    const zipRelativePath = `Download/AstorKayit/${zipName}`;
 
     const title = customTitle || `Astor Kayıt Arşivi (${records.length} Kayıt)`;
     const htmlContent = generateExportHtml(records, title);
@@ -834,5 +835,7 @@ export async function exportRecordsToZip(
       success: false,
       error: String(error),
     };
+  } finally {
+    await stopForegroundService();
   }
 }
