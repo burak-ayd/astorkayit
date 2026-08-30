@@ -27,7 +27,9 @@ export interface FileItem {
   lastModified: number;
 }
 
-declare class MediaStorageModuleType extends NativeModule<{}> {
+declare class MediaStorageModuleType extends NativeModule<{
+  onUploadProgress: (event: { percent: number; bytesSent: number; totalBytes: number }) => void;
+}> {
   getMediaBasePath(): string | null;
   initializeDirectories(): Promise<InitResult>;
   createFile(relativePath: string, content: string): Promise<CreateFileResult>;
@@ -62,6 +64,11 @@ declare class MediaStorageModuleType extends NativeModule<{}> {
     max: number
   ): Promise<boolean>;
   stopSyncForegroundService(): Promise<boolean>;
+  nativeUploadFile(
+    uploadUrl: string,
+    filePath: string,
+    mimeType: string
+  ): Promise<{ success: boolean; statusCode: number; body: string }>;
 }
 
 // Try to load the native module, return null if not available (e.g. Expo Go)

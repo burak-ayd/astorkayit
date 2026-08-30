@@ -5,6 +5,7 @@ import * as db from "@/database/db";
 import {
 	getFreshAccessToken,
 	syncAllRecordsToDrive,
+	syncZipArchiveToDrive,
 } from "@/services/googleDriveService";
 import { sendTaskNotification } from "@/services/notificationService";
 
@@ -23,6 +24,7 @@ TaskManager.defineTask(DRIVE_BACKGROUND_SYNC_TASK, async () => {
 		const autoSyncEnabled =
 			(await db.getSetting("gdrive_auto_sync")) === "1";
 		const syncOnWifiOnly = (await db.getSetting("gdrive_wifi_only")) !== "0";
+		const syncMode = (await db.getSetting("gdrive_sync_mode")) || "zip";
 
 		if (!isConnected || !autoSyncEnabled) {
 			console.log(
@@ -41,12 +43,11 @@ TaskManager.defineTask(DRIVE_BACKGROUND_SYNC_TASK, async () => {
 		// Veritabanındaki tüm kayıtları oku
 		const records = await db.getAllRecords();
 
-		// Senkronizasyonu başlat
-		const result = await syncAllRecordsToDrive(
-			accessToken,
-			records,
-			syncOnWifiOnly,
-		);
+		// Senkronizasyonu başlat (Seçilen moda göre)
+		const result =
+			syncMode === "folders"
+				? await syncAllRecordsToDrive(accessToken, records, syncOnWifiOnly)
+				: await syncZipArchiveToDrive(accessToken, records, syncOnWifiOnly);
 
 		if (result.success) {
 			const now = new Date().toISOString();

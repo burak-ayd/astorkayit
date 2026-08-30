@@ -655,5 +655,96 @@ class MediaStorageModule : Module() {
         promise.resolve(false)
       }
     }
+
+    Events("onUploadProgress")
+
+    AsyncFunction("nativeUploadFile") { uploadUrl: String, filePath: String, mimeType: String, promise: Promise ->
+      Thread {
+        var connection: java.net.HttpURLConnection? = null
+        try {
+          val cleanPath = if (filePath.startsWith("file://")) filePath.substring(7) else filePath
+          val file = File(cleanPath)
+          if (!file.exists()) {
+            promise.reject("FILE_NOT_FOUND", "File not found at $cleanPath", null)
+            return@Thread
+          }
+
+          val totalLength = file.length()
+          val url = java.net.URL(uploadUrl)
+          connection = (url.openConnection() as java.net.HttpURLConnection).apply {
+            requestMethod = "PUT"
+            doOutput = true
+            doInput = true
+            useCaches = false
+            connectTimeout = 30000
+            readTimeout = 60000
+            setRequestProperty("Content-Type", mimeType)
+            setRequestProperty("Content-Length", totalLength.toString())
+            setFixedLengthStreamingMode(totalLength)
+          }
+
+          val context = appContext.reactContext ?: appContext.currentActivity
+          val buffer = ByteArray(128 * 1024) // 128 KB buffer for ultra-fast native throughput
+          var bytesUploaded: Long = 0
+          var lastUpdatePercent = -1
+
+          FileInputStream(file).use { fis ->
+            BufferedInputStream(fis, 128 * 1024).use { bis ->
+              connection.outputStream.use { os ->
+                BufferedOutputStream(os, 128 * 1024).use { bos ->
+                  var bytesRead: Int
+                  while (bis.read(buffer).also { bytesRead = it } != -1) {
+                    bos.write(buffer, 0, bytesRead)
+                    bytesUploaded += bytesRead
+
+                    val percent = if (totalLength > 0) ((bytesUploaded * 100) / totalLength).toInt() else 0
+                    if (percent != lastUpdatePercent && percent <= 100) {
+                      lastUpdatePercent = percent
+                      if (context != null) {
+                        SyncForegroundService.update(
+                          context,
+                          "Google Drive Yedekleme ☁️",
+                          "Google Drive'a yükleniyor (%$percent)...",
+                          percent,
+                          100
+                        )
+                      }
+                      sendEvent("onUploadProgress", mapOf(
+                        "percent" to percent,
+                        "bytesSent" to bytesUploaded,
+                        "totalBytes" to totalLength
+                      ))
+                    }
+                  }
+                  bos.flush()
+                }
+              }
+            }
+          }
+
+          val responseCode = connection.responseCode
+          val responseBody = if (responseCode in 200..299) {
+            connection.inputStream.bufferedReader().use { it.readText() }
+          } else {
+            connection.errorStream?.bufferedReader()?.use { it.readText() } ?: "HTTP $responseCode"
+          }
+
+          if (responseCode in 200..299) {
+            promise.resolve(mapOf(
+              "success" to true,
+              "statusCode" to responseCode,
+              "body" to responseBody
+            ))
+          } else {
+            promise.reject("UPLOAD_FAILED", "HTTP $responseCode: $responseBody", null)
+          }
+        } catch (e: Exception) {
+          Log.e(TAG, "nativeUploadFile failed: ${e.message}", e)
+          promise.reject("UPLOAD_ERROR", e.message, e)
+        } finally {
+          connection?.disconnect()
+        }
+      }.start()
+    }
   }
 }

@@ -8,6 +8,7 @@ import {
   getOrCreateDriveFolder,
   GoogleUser,
   syncAllRecordsToDrive,
+  syncZipArchiveToDrive,
   SyncResult,
 } from '@/services/googleDriveService';
 import { sendTaskNotification } from '@/services/notificationService';
@@ -23,8 +24,11 @@ interface DriveState {
   autoSyncEnabled: boolean;
   syncOnWifiOnly: boolean;
   deleteFromDriveOnLocalDelete: boolean;
+  syncMode: 'zip' | 'folders';
   lastSyncTime: string | null;
   isSyncing: boolean;
+  syncStage: string | null;
+  syncProgressPercent: number;
   lastSyncResult: SyncResult | null;
   clientId: string;
 
@@ -35,6 +39,7 @@ interface DriveState {
   setAutoSync: (enabled: boolean) => Promise<void>;
   setSyncWifiOnly: (wifiOnly: boolean) => Promise<void>;
   setDeletePolicy: (deleteOnLocalDelete: boolean) => Promise<void>;
+  setSyncMode: (mode: 'zip' | 'folders') => Promise<void>;
   setClientId: (clientId: string) => Promise<void>;
   syncNow: (records: RecordItem[]) => Promise<SyncResult>;
   handleRecordDeleteSync: (recordTitle: string, recordId: number) => Promise<void>;
@@ -47,8 +52,11 @@ export const useDriveStore = create<DriveState>((set, get) => ({
   autoSyncEnabled: false,
   syncOnWifiOnly: true,
   deleteFromDriveOnLocalDelete: false,
+  syncMode: 'zip',
   lastSyncTime: null,
   isSyncing: false,
+  syncStage: null,
+  syncProgressPercent: 0,
   lastSyncResult: null,
   clientId: '',
 
@@ -61,6 +69,7 @@ export const useDriveStore = create<DriveState>((set, get) => ({
       const autoSync = await db.getSetting('gdrive_auto_sync');
       const wifiOnly = await db.getSetting('gdrive_wifi_only');
       const deletePolicy = await db.getSetting('gdrive_delete_policy');
+      const savedSyncMode = await db.getSetting('gdrive_sync_mode');
       const lastSync = await db.getSetting('gdrive_last_sync');
       const customClientId = await db.getSetting('gdrive_client_id');
 
@@ -82,6 +91,7 @@ export const useDriveStore = create<DriveState>((set, get) => ({
         autoSyncEnabled: isAutoSync,
         syncOnWifiOnly: wifiOnly !== '0', // default true
         deleteFromDriveOnLocalDelete: deletePolicy === '1',
+        syncMode: savedSyncMode === 'folders' ? 'folders' : 'zip',
         lastSyncTime: lastSync || null,
         clientId: customClientId || '',
       });
@@ -119,9 +129,9 @@ export const useDriveStore = create<DriveState>((set, get) => ({
         return true;
       }
       return false;
-    } catch (e) {
-      console.error('Google login error:', e);
-      throw e;
+    } catch (error) {
+      console.error('Google connect failed:', error);
+      return false;
     }
   },
 
@@ -131,15 +141,17 @@ export const useDriveStore = create<DriveState>((set, get) => ({
       await db.setSetting('gdrive_user_email', '');
       await db.setSetting('gdrive_user_name', '');
       await db.setSetting('gdrive_user_picture', '');
+      await db.setSetting('gdrive_auto_sync', '0');
+      await unregisterBackgroundSyncTask();
 
       set({
         isConnected: false,
-        user: null,
         accessToken: null,
+        user: null,
+        autoSyncEnabled: false,
       });
-      await unregisterBackgroundSyncTask();
     } catch (e) {
-      console.error('Drive disconnect error:', e);
+      console.warn('Google disconnect failed:', e);
     }
   },
 
@@ -163,13 +175,18 @@ export const useDriveStore = create<DriveState>((set, get) => ({
     await db.setSetting('gdrive_delete_policy', deleteOnLocalDelete ? '1' : '0');
   },
 
+  setSyncMode: async (mode: 'zip' | 'folders') => {
+    set({ syncMode: mode });
+    await db.setSetting('gdrive_sync_mode', mode);
+  },
+
   setClientId: async (clientId: string) => {
     set({ clientId });
     await db.setSetting('gdrive_client_id', clientId);
   },
 
   syncNow: async (records: RecordItem[]) => {
-    let { accessToken, isConnected, syncOnWifiOnly } = get();
+    let { accessToken, isConnected, syncOnWifiOnly, syncMode } = get();
 
     if (!isConnected) {
       const errRes: SyncResult = {
@@ -201,8 +218,21 @@ export const useDriveStore = create<DriveState>((set, get) => ({
     }
 
     try {
-      set({ isSyncing: true });
-      const result = await syncAllRecordsToDrive(accessToken, records, syncOnWifiOnly);
+      set({
+        isSyncing: true,
+        syncStage: 'Yedekleme hazırlanıyor...',
+        syncProgressPercent: 0,
+      });
+
+      const onProgress = (stage: string, progress: number, max: number) => {
+        const percent = max > 0 ? Math.round((progress / max) * 100) : 0;
+        set({ syncStage: stage, syncProgressPercent: Math.min(100, Math.max(0, percent)) });
+      };
+
+      const result =
+        syncMode === 'zip'
+          ? await syncZipArchiveToDrive(accessToken, records, syncOnWifiOnly, onProgress)
+          : await syncAllRecordsToDrive(accessToken, records, syncOnWifiOnly, onProgress);
 
       if (result.success) {
         const now = new Date().toISOString();
@@ -251,7 +281,7 @@ export const useDriveStore = create<DriveState>((set, get) => ({
 
       return errRes;
     } finally {
-      set({ isSyncing: false });
+      set({ isSyncing: false, syncStage: null, syncProgressPercent: 0 });
     }
   },
 

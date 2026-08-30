@@ -1,9 +1,7 @@
 import MaterialIcons from "@react-native-vector-icons/material-icons/static";
 import { Image } from "expo-image";
-import React from "react";
 import {
 	ActivityIndicator,
-	Alert,
 	Pressable,
 	StyleSheet,
 	Switch,
@@ -38,6 +36,10 @@ export function DriveSettingsSection({
 	);
 	const lastSyncTime = useDriveStore((s) => s.lastSyncTime);
 	const isSyncing = useDriveStore((s) => s.isSyncing);
+	const syncStage = useDriveStore((s) => s.syncStage);
+	const syncProgressPercent = useDriveStore((s) => s.syncProgressPercent);
+	const syncMode = useDriveStore((s) => s.syncMode);
+	const setSyncMode = useDriveStore((s) => s.setSyncMode);
 	const connectWithGoogle = useDriveStore((s) => s.connectWithGoogle);
 	const disconnectDrive = useDriveStore((s) => s.disconnect);
 	const setAutoSync = useDriveStore((s) => s.setAutoSync);
@@ -52,7 +54,8 @@ export function DriveSettingsSection({
 			if (ok) {
 				showAlert({
 					title: "Bağlantı Başarılı",
-					message: "Google Drive hesabınız başarıyla bağlandı. Anılarınız güvende.",
+					message:
+						"Google Drive hesabınız başarıyla bağlandı. Anılarınız güvende.",
 					type: "success",
 				});
 			}
@@ -70,7 +73,8 @@ export function DriveSettingsSection({
 	const handleGoogleDisconnect = () => {
 		showAlert({
 			title: "Bağlantıyı Kes",
-			message: "Google Drive hesabınızın bağlantısını kesmek istediğinize emin misiniz? Yerel kayıtlarınız cihazınızda korunur.",
+			message:
+				"Google Drive hesabınızın bağlantısını kesmek istediğinize emin misiniz? Yerel kayıtlarınız cihazınızda korunur.",
 			type: "confirm",
 			buttons: [
 				{ text: "İptal", style: "cancel" },
@@ -233,6 +237,58 @@ export function DriveSettingsSection({
 					</Pressable>
 				</View>
 
+				{/* Canlı İlerleme Çubuğu (WhatsApp Tarzı Aşamalar ve % Göstergesi) */}
+				{isSyncing && (
+					<View
+						style={[
+							styles.liveProgressCard,
+							{
+								backgroundColor: theme.card,
+								borderColor: theme.primary,
+							},
+						]}>
+						<View style={styles.liveProgressHeader}>
+							<View style={styles.liveProgressTitleRow}>
+								<ActivityIndicator
+									size="small"
+									color={theme.primary}
+								/>
+								<ThemedText
+									type="smallBold"
+									style={[
+										styles.liveProgressStageText,
+										{ color: theme.primary },
+									]}>
+									{syncStage || "Eşitleniyor..."}
+								</ThemedText>
+							</View>
+							<ThemedText
+								type="smallBold"
+								style={[
+									styles.liveProgressPercentText,
+									{ color: theme.primary },
+								]}>
+								%{syncProgressPercent}
+							</ThemedText>
+						</View>
+						<View
+							style={[
+								styles.liveProgressBarTrack,
+								{ backgroundColor: theme.primaryMuted },
+							]}>
+							<View
+								style={[
+									styles.liveProgressBarFill,
+									{
+										width: `${Math.max(4, syncProgressPercent)}%`,
+										backgroundColor: theme.warning,
+									},
+								]}
+							/>
+						</View>
+					</View>
+				)}
+
 				{/* Toggle Option Rows */}
 				<View style={styles.toggleGroup}>
 					{/* Auto Sync */}
@@ -351,6 +407,110 @@ export function DriveSettingsSection({
 							thumbColor="#ffffff"
 						/>
 					</View>
+
+					{/* Yedekleme Modu Seçimi (Hızlı ZIP vs Açık Klasör) */}
+					<View style={styles.modeSectionWrap}>
+						<ThemedText
+							type="smallBold"
+							style={{ color: theme.text }}>
+							Yedekleme Türü
+						</ThemedText>
+						<View style={styles.modeCardsRow}>
+							<Pressable
+								style={[
+									styles.modeCard,
+									{
+										backgroundColor:
+											syncMode === "zip"
+												? theme.primaryMuted
+												: theme.background,
+										borderColor:
+											syncMode === "zip"
+												? theme.primary
+												: theme.border,
+									},
+								]}
+								onPress={() => setSyncMode("zip")}>
+								<View style={styles.modeCardHeader}>
+									<MaterialIcons
+										name="bolt"
+										size={18}
+										color={
+											syncMode === "zip"
+												? theme.primary
+												: theme.textSecondary
+										}
+									/>
+									<ThemedText
+										type="smallBold"
+										style={{
+											color:
+												syncMode === "zip"
+													? theme.primary
+													: theme.text,
+										}}>
+										Hızlı Arşiv (ZIP)
+									</ThemedText>
+								</View>
+								<ThemedText
+									type="small"
+									style={[
+										styles.modeCardDesc,
+										{ color: theme.textSecondary },
+									]}>
+									WhatsApp tarzı tek parça ultra hızlı
+									yedekleme (Önerilen).
+								</ThemedText>
+							</Pressable>
+
+							<Pressable
+								style={[
+									styles.modeCard,
+									{
+										backgroundColor:
+											syncMode === "folders"
+												? theme.primaryMuted
+												: theme.background,
+										borderColor:
+											syncMode === "folders"
+												? theme.primary
+												: theme.border,
+									},
+								]}
+								onPress={() => setSyncMode("folders")}>
+								<View style={styles.modeCardHeader}>
+									<MaterialIcons
+										name="folder"
+										size={18}
+										color={
+											syncMode === "folders"
+												? theme.primary
+												: theme.textSecondary
+										}
+									/>
+									<ThemedText
+										type="smallBold"
+										style={{
+											color:
+												syncMode === "folders"
+													? theme.primary
+													: theme.text,
+										}}>
+										Klasör Ağacı
+									</ThemedText>
+								</View>
+								<ThemedText
+									type="small"
+									style={[
+										styles.modeCardDesc,
+										{ color: theme.textSecondary },
+									]}>
+									Drive üzerinde açık klasör ve dosyalar
+									halinde saklar.
+								</ThemedText>
+							</Pressable>
+						</View>
+					</View>
 				</View>
 			</>
 		);
@@ -364,8 +524,9 @@ export function DriveSettingsSection({
 					styles.loginPromptText,
 					{ color: theme.textSecondary },
 				]}>
-				Anılarınızı Google Drive hesabınıza yedekleyebilir, fotoğraflarınızı
-				orijinal klasör yapısıyla güvenle saklayabilirsiniz.
+				Anılarınızı Google Drive hesabınıza yedekleyebilir,
+				fotoğraflarınızı orijinal klasör yapısıyla güvenle
+				saklayabilirsiniz.
 			</ThemedText>
 
 			<Pressable
@@ -519,5 +680,64 @@ const styles = StyleSheet.create({
 	},
 	buttonDisabled: {
 		opacity: 0.5,
+	},
+	modeSectionWrap: {
+		gap: Spacing.two,
+		paddingTop: Spacing.one,
+	},
+	modeCardsRow: {
+		flexDirection: "row",
+		gap: Spacing.two,
+	},
+	modeCard: {
+		flex: 1,
+		padding: Spacing.two,
+		borderRadius: 12,
+		borderWidth: 1.5,
+		gap: 6,
+	},
+	modeCardHeader: {
+		flexDirection: "row",
+		alignItems: "center",
+		gap: 6,
+	},
+	modeCardDesc: {
+		fontSize: 10,
+		lineHeight: 14,
+	},
+	liveProgressCard: {
+		padding: Spacing.two,
+		borderRadius: 12,
+		borderWidth: 1,
+		gap: 8,
+		marginTop: Spacing.one,
+	},
+	liveProgressHeader: {
+		flexDirection: "row",
+		alignItems: "center",
+		justifyContent: "space-between",
+	},
+	liveProgressTitleRow: {
+		flexDirection: "row",
+		alignItems: "center",
+		gap: 8,
+		flex: 1,
+	},
+	liveProgressStageText: {
+		fontSize: 12,
+	},
+	liveProgressPercentText: {
+		fontSize: 12,
+		fontWeight: "700",
+	},
+	liveProgressBarTrack: {
+		height: 6,
+		borderRadius: 3,
+		overflow: "hidden",
+		width: "100%",
+	},
+	liveProgressBarFill: {
+		height: "100%",
+		borderRadius: 3,
 	},
 });
