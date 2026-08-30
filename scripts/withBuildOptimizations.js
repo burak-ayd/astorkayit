@@ -14,13 +14,7 @@ module.exports = function withBuildOptimizations(config) {
 			const optimizationBlock = `
 // --- Expo Build Optimizations Start ---
 android {
-    buildTypes {
-        release {
-            minifyEnabled true
-            shrinkResources true
-            proguardFiles getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro"
-        }
-    }
+    
     packagingOptions {
         jniLibs {
             useLegacyPackaging = false

@@ -2,7 +2,7 @@
   "expo": {
     "name": "Astor Kayıt",
     "slug": "astor-kayit",
-    "version": "1.0.0",
+    "version": "1.0.2",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
     "scheme": "astorkayit",
@@ -58,6 +58,18 @@
         {
           "photosPermission": "Galerinizden fotoğraf ve video seçebilmeniz için galeri erişim izni gereklidir.",
           "cameraPermission": "Fotoğraf çekebilmeniz için kamera izni gereklidir."
+        }
+      ],
+      [
+        "expo-build-properties",
+        {
+          "android": {
+            "enableMinifyInReleaseBuilds": true,
+            "enableProguardInReleaseBuilds": true,
+            "enableShrinkResourcesInReleaseBuilds": true,
+            "useLegacyPackaging": true,
+            "enablePngCrunchInReleaseBuilds": true
+          }
         }
       ],
       "expo-sqlite",
