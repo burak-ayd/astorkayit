@@ -4,6 +4,7 @@ export interface RecordItem {
   description: string;
   photos: string[];
   is_hidden: boolean;
+  is_pinned?: boolean;
   created_at: string;
   updated_at: string;
 }

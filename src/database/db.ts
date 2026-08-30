@@ -26,6 +26,7 @@ export async function getDatabase(): Promise<SQLite.SQLiteDatabase> {
           title TEXT NOT NULL,
           description TEXT,
           is_hidden INTEGER DEFAULT 0,
+          is_pinned INTEGER DEFAULT 0,
           created_at TEXT NOT NULL,
           updated_at TEXT NOT NULL
         );
@@ -44,10 +45,18 @@ export async function getDatabase(): Promise<SQLite.SQLiteDatabase> {
         );
       `);
 
-      // Safe column migration
+      // Safe column migrations
       try {
         await db.execAsync(`
           ALTER TABLE records ADD COLUMN is_hidden INTEGER DEFAULT 0;
+        `);
+      } catch {
+        // Column already exists
+      }
+
+      try {
+        await db.execAsync(`
+          ALTER TABLE records ADD COLUMN is_pinned INTEGER DEFAULT 0;
         `);
       } catch {
         // Column already exists
@@ -91,6 +100,7 @@ export async function getAllRecords(): Promise<RecordItem[]> {
     title: string;
     description: string | null;
     is_hidden: number | null;
+    is_pinned: number | null;
     created_at: string;
     updated_at: string;
   }
@@ -102,7 +112,7 @@ export async function getAllRecords(): Promise<RecordItem[]> {
   }
 
   const recordRows = await db.getAllAsync<RecordRow>(
-    'SELECT * FROM records ORDER BY datetime(created_at) DESC'
+    'SELECT * FROM records ORDER BY is_pinned DESC, datetime(created_at) DESC'
   );
 
   const photoRows = await db.getAllAsync<PhotoRow>(
@@ -122,6 +132,7 @@ export async function getAllRecords(): Promise<RecordItem[]> {
     description: r.description || '',
     photos: photosMap.get(r.id) || [],
     is_hidden: r.is_hidden === 1,
+    is_pinned: r.is_pinned === 1,
     created_at: r.created_at,
     updated_at: r.updated_at,
   }));
@@ -137,6 +148,7 @@ export async function getRecordById(id: number): Promise<RecordItem | null> {
     title: string;
     description: string | null;
     is_hidden: number | null;
+    is_pinned: number | null;
     created_at: string;
     updated_at: string;
   }
@@ -163,6 +175,7 @@ export async function getRecordById(id: number): Promise<RecordItem | null> {
     description: record.description || '',
     photos: photoRows.map((p) => p.uri),
     is_hidden: record.is_hidden === 1,
+    is_pinned: record.is_pinned === 1,
     created_at: record.created_at,
     updated_at: record.updated_at,
   };
@@ -420,4 +433,34 @@ export async function getStorageStats(): Promise<StorageStats> {
     totalPhotos: photoCount?.count ?? 0,
     totalSizeBytes: totalSize,
   };
+}
+
+export async function setRecordsPinStatus(
+  ids: number[],
+  isPinned: boolean
+): Promise<void> {
+  if (!ids || ids.length === 0) return;
+  const db = await getDatabase();
+  const placeholders = ids.map(() => '?').join(',');
+  await db.runAsync(
+    `UPDATE records SET is_pinned = ?, updated_at = ? WHERE id IN (${placeholders})`,
+    [isPinned ? 1 : 0, new Date().toISOString(), ...ids]
+  );
+}
+
+export async function setMultipleRecordsGalleryVisibility(
+  ids: number[],
+  hideFromGallery: boolean
+): Promise<void> {
+  if (!ids || ids.length === 0) return;
+  for (const id of ids) {
+    await setRecordGalleryVisibility(id, hideFromGallery);
+  }
+}
+
+export async function deleteMultipleRecords(ids: number[]): Promise<void> {
+  if (!ids || ids.length === 0) return;
+  for (const id of ids) {
+    await deleteRecord(id);
+  }
 }

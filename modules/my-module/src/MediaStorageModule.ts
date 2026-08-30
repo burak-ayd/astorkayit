@@ -43,6 +43,11 @@ declare class MediaStorageModuleType extends NativeModule<{}> {
   deleteDirectory(relativeOrAbsolutePath: string): Promise<boolean>;
   listFiles(relativePath: string): Promise<FileItem[]>;
   exists(relativePath: string): boolean;
+  shareMediaFiles(
+    filePaths: string[],
+    title?: string,
+    message?: string
+  ): Promise<boolean>;
 }
 
 // Try to load the native module, return null if not available (e.g. Expo Go)

@@ -3,9 +3,11 @@ import Constants from "expo-constants";
 import { useRouter } from "expo-router";
 import { useEffect, useState } from "react";
 import {
+	Alert,
 	FlatList,
 	Pressable,
 	RefreshControl,
+	Share,
 	StyleSheet,
 	TextInput,
 	View,
@@ -19,6 +21,7 @@ import { ThemedView } from "@/components/themed-view";
 import { Spacing } from "@/constants/theme";
 import { useTheme } from "@/hooks/use-theme";
 import { selectFilteredRecords, useRecordStore } from "@/store/useRecordStore";
+import MediaStorageModule from "../../../modules/my-module/src/MediaStorageModule";
 
 export default function HomeScreen() {
 	const router = useRouter();
@@ -33,12 +36,17 @@ export default function HomeScreen() {
 	const setSearchQuery = useRecordStore((s) => s.setSearchQuery);
 	const setDateFilter = useRecordStore((s) => s.setDateFilter);
 	const resetFilters = useRecordStore((s) => s.resetFilters);
+	const togglePinRecords = useRecordStore((s) => s.togglePinRecords);
+	const deleteMultipleRecords = useRecordStore((s) => s.deleteMultipleRecords);
+	const toggleMultipleRecordVisibility = useRecordStore(
+		(s) => s.toggleMultipleRecordVisibility,
+	);
 
 	const [dateModalVisible, setDateModalVisible] = useState(false);
+	const [selectedIds, setSelectedIds] = useState<number[]>([]);
 
 	// app.config.js içindeki name veya extra alanını okuyun
 	const appName = Constants.expoConfig?.name;
-	const variant = Constants.expoConfig?.extra?.variant;
 
 	const filteredRecords = selectFilteredRecords(
 		records,
@@ -47,6 +55,7 @@ export default function HomeScreen() {
 	);
 	const isFilterActive =
 		dateFilter.startDate !== null || dateFilter.endDate !== null;
+	const isSelectionMode = selectedIds.length > 0;
 
 	useEffect(() => {
 		loadRecords();
@@ -60,84 +69,486 @@ export default function HomeScreen() {
 		});
 	};
 
+	// Selection Helpers
+	const isAllFilteredSelected =
+		filteredRecords.length > 0 &&
+		filteredRecords.every((r) => selectedIds.includes(r.id));
+
+	const areAllSelectedPinned =
+		selectedIds.length > 0 &&
+		selectedIds.every((id) => {
+			const r = records.find((rec) => rec.id === id);
+			return r?.is_pinned;
+		});
+
+	const areAllSelectedHidden =
+		selectedIds.length > 0 &&
+		selectedIds.every((id) => {
+			const r = records.find((rec) => rec.id === id);
+			return r?.is_hidden;
+		});
+
+	const handleCardLongPress = (id: number) => {
+		if (!selectedIds.includes(id)) {
+			setSelectedIds((prev) => [...prev, id]);
+		}
+	};
+
+	const handleCardPress = (id: number) => {
+		if (isSelectionMode) {
+			if (selectedIds.includes(id)) {
+				setSelectedIds((prev) => prev.filter((itemId) => itemId !== id));
+			} else {
+				setSelectedIds((prev) => [...prev, id]);
+			}
+		} else {
+			router.push({
+				pathname: "/detail/[id]",
+				params: { id },
+			} as any);
+		}
+	};
+
+	const handleCancelSelection = () => {
+		setSelectedIds([]);
+	};
+
+	const handleToggleSelectAll = () => {
+		if (isAllFilteredSelected) {
+			setSelectedIds([]);
+		} else {
+			setSelectedIds(filteredRecords.map((r) => r.id));
+		}
+	};
+
+	// Actions
+	const handleTogglePin = async () => {
+		if (selectedIds.length === 0) return;
+		const nextPinState = !areAllSelectedPinned;
+		await togglePinRecords(selectedIds, nextPinState);
+		setSelectedIds([]);
+	};
+
+	const handleToggleVisibility = () => {
+		if (selectedIds.length === 0) return;
+		const nextHiddenState = !areAllSelectedHidden;
+		Alert.alert(
+			nextHiddenState ? "Galeride Gizle" : "Galeride Göster",
+			`Seçilen ${selectedIds.length} kaydın fotoğrafları cihaz galerisinde ${
+				nextHiddenState ? "gizlensin mi?" : "gösterilsin mi?"
+			}`,
+			[
+				{ text: "Vazgeç", style: "cancel" },
+				{
+					text: "Evet",
+					onPress: async () => {
+						await toggleMultipleRecordVisibility(
+							selectedIds,
+							nextHiddenState,
+						);
+						setSelectedIds([]);
+					},
+				},
+			],
+		);
+	};
+
+	const handleShare = async () => {
+		if (selectedIds.length === 0) return;
+		const selectedRecords = records.filter((r) => selectedIds.includes(r.id));
+
+		const allPhotos: string[] = [];
+		for (const rec of selectedRecords) {
+			for (const p of rec.photos) {
+				if (p) allPhotos.push(p);
+			}
+		}
+
+		let title = "";
+		let message = "";
+
+		if (selectedRecords.length === 1) {
+			const r = selectedRecords[0];
+			title = r.title;
+			const dateStr = new Date(r.created_at).toLocaleDateString("tr-TR");
+			const timeStr = new Date(r.created_at).toLocaleTimeString("tr-TR", {
+				hour: "2-digit",
+				minute: "2-digit",
+			});
+			message = `📋 ${r.title}\n\n${
+				r.description ? r.description + "\n\n" : ""
+			}📅 Tarih: ${dateStr} ${timeStr}${
+				r.photos.length > 0 ? `\n📸 ${r.photos.length} Adet Fotoğraf` : ""
+			}`;
+		} else {
+			title = `${selectedRecords.length} Adet Kayıt`;
+			const summary = selectedRecords
+				.map((r, idx) => {
+					const dateStr = new Date(r.created_at).toLocaleDateString("tr-TR");
+					return `${idx + 1}. ${r.title} (${dateStr})${
+						r.description ? `\n   ${r.description}` : ""
+					}`;
+				})
+				.join("\n\n");
+
+			message = `📋 Seçilen Kayıtlar (${selectedRecords.length} Adet):\n\n${summary}${
+				allPhotos.length > 0 ? `\n\n📸 Toplam ${allPhotos.length} Fotoğraf` : ""
+			}`;
+		}
+
+		try {
+			if (MediaStorageModule && allPhotos.length > 0) {
+				await MediaStorageModule.shareMediaFiles(allPhotos, title, message);
+			} else {
+				await Share.share({
+					title,
+					message,
+				});
+			}
+		} catch (error) {
+			console.error("Paylaşım hatası:", error);
+			try {
+				await Share.share({
+					title,
+					message,
+				});
+			} catch {
+				Alert.alert("Hata", "Paylaşım başlatılamadı.");
+			}
+		}
+	};
+
+	const handleExport = () => {
+		if (selectedIds.length === 0) return;
+		Alert.alert(
+			"Dışarı Aktar",
+			`Seçilen ${selectedIds.length} kayıt için ZIP olarak dışarı aktarma özelliği bir sonraki güncellemede eklenecektir.`,
+			[{ text: "Tamam" }],
+		);
+	};
+
+	const handleDelete = () => {
+		if (selectedIds.length === 0) return;
+		Alert.alert(
+			"Kayıtları Sil",
+			`Seçilen ${selectedIds.length} adet kaydı silmek istediğinize emin misiniz? Bu işlem geri alınamaz.`,
+			[
+				{ text: "Vazgeç", style: "cancel" },
+				{
+					text: "Sil",
+					style: "destructive",
+					onPress: async () => {
+						await deleteMultipleRecords(selectedIds);
+						setSelectedIds([]);
+					},
+				},
+			],
+		);
+	};
+
 	return (
 		<ThemedView style={styles.container}>
 			<SafeAreaView style={styles.safeArea}>
-				{/* Header Bar */}
-				<View style={styles.header}>
-					<View>
-						<ThemedText type="subtitle" style={styles.headerTitle}>
-							{appName}
-						</ThemedText>
-						<ThemedText
-							type="small"
-							style={[
-								styles.headerSub,
-								{ color: theme.textSecondary },
-							]}>
-							{records.length} Adet Kayıt
-						</ThemedText>
-					</View>
-
-					<Pressable
-						style={({ pressed }) => [
-							styles.filterButton,
-							{
-								backgroundColor: isFilterActive
-									? theme.primary
-									: theme.primaryMuted,
-							},
-							pressed && styles.buttonPressed,
-						]}
-						onPress={() => setDateModalVisible(true)}>
-						<MaterialIcons
-							name="filter-list"
-							size={22}
-							color={isFilterActive ? "#ffffff" : theme.primary}
-						/>
-					</Pressable>
-				</View>
-
-				{/* Search Bar */}
-				<View style={styles.searchBarWrapper}>
+				{/* Header Bar or Selection Action Bar */}
+				{isSelectionMode ? (
 					<View
 						style={[
-							styles.searchBar,
+							styles.selectionHeader,
 							{
 								backgroundColor: theme.backgroundElement,
 								borderColor: theme.border,
-								borderWidth: 1,
 							},
 						]}>
-						<MaterialIcons
-							name="search"
-							size={20}
-							color={theme.textMuted}
-						/>
-						<TextInput
-							placeholder="Başlık veya açıklamada ara..."
-							placeholderTextColor={theme.textMuted}
-							style={[styles.searchInput, { color: theme.text }]}
-							value={searchQuery}
-							onChangeText={setSearchQuery}
-							clearButtonMode="while-editing"
-						/>
-						{searchQuery.length > 0 && (
+						{/* Selection Top Row */}
+						<View style={styles.selectionTopRow}>
+							<View style={styles.selectionLeft}>
+								<Pressable
+									style={({ pressed }) => [
+										styles.selectionCloseBtn,
+										{ backgroundColor: theme.backgroundSelected },
+										pressed && styles.buttonPressed,
+									]}
+									onPress={handleCancelSelection}
+									hitSlop={8}>
+									<MaterialIcons
+										name="close"
+										size={20}
+										color={theme.text}
+									/>
+								</Pressable>
+								<View>
+									<ThemedText
+										type="smallBold"
+										style={styles.selectionTitle}>
+										{selectedIds.length} Seçildi
+									</ThemedText>
+									<ThemedText
+										type="small"
+										style={[
+											styles.selectionSub,
+											{ color: theme.textSecondary },
+										]}>
+										{filteredRecords.length} kayıttan
+									</ThemedText>
+								</View>
+							</View>
+
 							<Pressable
-								onPress={() => setSearchQuery("")}
-								hitSlop={8}>
+								style={({ pressed }) => [
+									styles.selectAllBtn,
+									{
+										backgroundColor: isAllFilteredSelected
+											? theme.primary
+											: theme.primaryMuted,
+									},
+									pressed && styles.buttonPressed,
+								]}
+								onPress={handleToggleSelectAll}>
 								<MaterialIcons
-									name="close"
-									size={18}
-									color={theme.textMuted}
+									name={
+										isAllFilteredSelected
+											? "check-box"
+											: "select-all"
+									}
+									size={16}
+									color={
+										isAllFilteredSelected
+											? "#ffffff"
+											: theme.primary
+									}
 								/>
+								<ThemedText
+									type="small"
+									style={[
+										styles.selectAllBtnText,
+										{
+											color: isAllFilteredSelected
+												? "#ffffff"
+												: theme.primary,
+										},
+									]}>
+									{isAllFilteredSelected
+										? "Kaldır"
+										: "Tümünü Seç"}
+								</ThemedText>
 							</Pressable>
-						)}
+						</View>
+
+						{/* Action Buttons Toolbar */}
+						<View style={styles.selectionActionsRow}>
+							{/* Pin Action */}
+							<Pressable
+								style={({ pressed }) => [
+									styles.actionItem,
+									pressed && styles.buttonPressed,
+								]}
+								onPress={handleTogglePin}>
+								<View
+									style={[
+										styles.actionIconCircle,
+										{ backgroundColor: theme.primaryMuted },
+									]}>
+									<MaterialIcons
+										name="push-pin"
+										size={18}
+										color={
+											areAllSelectedPinned
+												? theme.warning
+												: theme.primary
+										}
+									/>
+								</View>
+								<ThemedText style={styles.actionLabel}>
+									{areAllSelectedPinned ? "Pin Kaldır" : "Pinle"}
+								</ThemedText>
+							</Pressable>
+
+							{/* Gallery Visibility Action */}
+							<Pressable
+								style={({ pressed }) => [
+									styles.actionItem,
+									pressed && styles.buttonPressed,
+								]}
+								onPress={handleToggleVisibility}>
+								<View
+									style={[
+										styles.actionIconCircle,
+										{ backgroundColor: theme.primaryMuted },
+									]}>
+									<MaterialIcons
+										name={
+											areAllSelectedHidden
+												? "visibility"
+												: "visibility-off"
+										}
+										size={18}
+										color={theme.primary}
+									/>
+								</View>
+								<ThemedText style={styles.actionLabel}>
+									{areAllSelectedHidden ? "Görünür Yap" : "Gizle"}
+								</ThemedText>
+							</Pressable>
+
+							{/* Share Action */}
+							<Pressable
+								style={({ pressed }) => [
+									styles.actionItem,
+									pressed && styles.buttonPressed,
+								]}
+								onPress={handleShare}>
+								<View
+									style={[
+										styles.actionIconCircle,
+										{ backgroundColor: theme.primaryMuted },
+									]}>
+									<MaterialIcons
+										name="share"
+										size={18}
+										color={theme.primary}
+									/>
+								</View>
+								<ThemedText style={styles.actionLabel}>
+									Paylaş
+								</ThemedText>
+							</Pressable>
+
+							{/* Export Action */}
+							<Pressable
+								style={({ pressed }) => [
+									styles.actionItem,
+									pressed && styles.buttonPressed,
+								]}
+								onPress={handleExport}>
+								<View
+									style={[
+										styles.actionIconCircle,
+										{ backgroundColor: theme.primaryMuted },
+									]}>
+									<MaterialIcons
+										name="archive"
+										size={18}
+										color={theme.primary}
+									/>
+								</View>
+								<ThemedText style={styles.actionLabel}>
+									Dışa Aktar
+								</ThemedText>
+							</Pressable>
+
+							{/* Delete Action */}
+							<Pressable
+								style={({ pressed }) => [
+									styles.actionItem,
+									pressed && styles.buttonPressed,
+								]}
+								onPress={handleDelete}>
+								<View
+									style={[
+										styles.actionIconCircle,
+										{ backgroundColor: theme.dangerMuted },
+									]}>
+									<MaterialIcons
+										name="delete-outline"
+										size={18}
+										color={theme.danger}
+									/>
+								</View>
+								<ThemedText
+									style={[
+										styles.actionLabel,
+										{ color: theme.danger },
+									]}>
+									Sil
+								</ThemedText>
+							</Pressable>
+						</View>
 					</View>
-				</View>
+				) : (
+					<View style={styles.header}>
+						<View>
+							<ThemedText
+								type="subtitle"
+								style={styles.headerTitle}>
+								{appName}
+							</ThemedText>
+							<ThemedText
+								type="small"
+								style={[
+									styles.headerSub,
+									{ color: theme.textSecondary },
+								]}>
+								{records.length} Adet Kayıt
+							</ThemedText>
+						</View>
+
+						<Pressable
+							style={({ pressed }) => [
+								styles.filterButton,
+								{
+									backgroundColor: isFilterActive
+										? theme.primary
+										: theme.primaryMuted,
+								},
+								pressed && styles.buttonPressed,
+							]}
+							onPress={() => setDateModalVisible(true)}>
+							<MaterialIcons
+								name="filter-list"
+								size={22}
+								color={
+									isFilterActive ? "#ffffff" : theme.primary
+								}
+							/>
+						</Pressable>
+					</View>
+				)}
+
+				{/* Search Bar */}
+				{!isSelectionMode && (
+					<View style={styles.searchBarWrapper}>
+						<View
+							style={[
+								styles.searchBar,
+								{
+									backgroundColor: theme.backgroundElement,
+									borderColor: theme.border,
+									borderWidth: 1,
+								},
+							]}>
+							<MaterialIcons
+								name="search"
+								size={20}
+								color={theme.textMuted}
+							/>
+							<TextInput
+								placeholder="Başlık veya açıklamada ara..."
+								placeholderTextColor={theme.textMuted}
+								style={[
+									styles.searchInput,
+									{ color: theme.text },
+								]}
+								value={searchQuery}
+								onChangeText={setSearchQuery}
+								clearButtonMode="while-editing"
+							/>
+							{searchQuery.length > 0 && (
+								<Pressable
+									onPress={() => setSearchQuery("")}
+									hitSlop={8}>
+									<MaterialIcons
+										name="close"
+										size={18}
+										color={theme.textMuted}
+									/>
+								</Pressable>
+							)}
+						</View>
+					</View>
+				)}
 
 				{/* Active Filter Chips */}
-				{isFilterActive && (
+				{isFilterActive && !isSelectionMode && (
 					<View style={styles.filterChipsRow}>
 						<View
 							style={[
@@ -190,12 +601,10 @@ export default function HomeScreen() {
 					renderItem={({ item }) => (
 						<RecordCard
 							record={item}
-							onPress={() =>
-								router.push({
-									pathname: "/detail/[id]",
-									params: { id: item.id },
-								} as any)
-							}
+							isSelectionMode={isSelectionMode}
+							isSelected={selectedIds.includes(item.id)}
+							onPress={() => handleCardPress(item.id)}
+							onLongPress={() => handleCardLongPress(item.id)}
 						/>
 					)}
 					ListEmptyComponent={
@@ -314,6 +723,81 @@ const styles = StyleSheet.create({
 		borderRadius: 14,
 		alignItems: "center",
 		justifyContent: "center",
+	},
+	selectionHeader: {
+		paddingHorizontal: Spacing.three,
+		paddingTop: Spacing.two,
+		paddingBottom: Spacing.three,
+		marginHorizontal: Spacing.three,
+		marginTop: Spacing.one,
+		marginBottom: Spacing.two,
+		borderRadius: 18,
+		borderWidth: 1,
+		shadowOffset: { width: 0, height: 4 },
+		shadowOpacity: 0.08,
+		shadowRadius: 10,
+		elevation: 4,
+	},
+	selectionTopRow: {
+		flexDirection: "row",
+		justifyContent: "space-between",
+		alignItems: "center",
+		marginBottom: Spacing.three,
+	},
+	selectionLeft: {
+		flexDirection: "row",
+		alignItems: "center",
+		gap: Spacing.two,
+	},
+	selectionCloseBtn: {
+		width: 36,
+		height: 36,
+		borderRadius: 18,
+		alignItems: "center",
+		justifyContent: "center",
+	},
+	selectionTitle: {
+		fontSize: 16,
+		lineHeight: 20,
+	},
+	selectionSub: {
+		fontSize: 11,
+		lineHeight: 14,
+	},
+	selectAllBtn: {
+		flexDirection: "row",
+		alignItems: "center",
+		gap: 6,
+		paddingHorizontal: 12,
+		paddingVertical: 7,
+		borderRadius: 12,
+	},
+	selectAllBtnText: {
+		fontSize: 12,
+		fontWeight: "600",
+	},
+	selectionActionsRow: {
+		flexDirection: "row",
+		justifyContent: "space-around",
+		alignItems: "center",
+		paddingTop: Spacing.one,
+	},
+	actionItem: {
+		alignItems: "center",
+		gap: 4,
+		minWidth: 54,
+	},
+	actionIconCircle: {
+		width: 42,
+		height: 42,
+		borderRadius: 21,
+		alignItems: "center",
+		justifyContent: "center",
+	},
+	actionLabel: {
+		fontSize: 11,
+		fontWeight: "600",
+		textAlign: "center",
 	},
 	searchBarWrapper: {
 		paddingHorizontal: Spacing.four,

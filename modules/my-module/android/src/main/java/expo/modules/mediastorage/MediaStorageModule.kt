@@ -1,9 +1,11 @@
 package expo.modules.mediastorage
 
+import android.content.Intent
 import android.media.MediaScannerConnection
 import android.net.Uri
 import android.util.Log
 import android.webkit.MimeTypeMap
+import androidx.core.content.FileProvider
 import expo.modules.kotlin.Promise
 import expo.modules.kotlin.modules.Module
 import expo.modules.kotlin.modules.ModuleDefinition
@@ -460,6 +462,72 @@ class MediaStorageModule : Module() {
       val basePath = File(mediaDirs[0], "AstorKayit")
       val file = File(basePath, relativePath)
       return@Function file.exists()
+    }
+
+    // Share one or more media files along with title and message via native Android Intent
+    AsyncFunction("shareMediaFiles") { filePaths: List<String>, title: String?, message: String?, promise: Promise ->
+      try {
+        val context = appContext.reactContext
+          ?: throw Exception("React context is not available")
+        val currentActivity = appContext.currentActivity
+          ?: throw Exception("Current activity is not available")
+
+        val uris = ArrayList<Uri>()
+        var primaryMimeType = "*/*"
+
+        for (rawPath in filePaths) {
+          val cleanPath = rawPath.removePrefix("file://")
+          val file = File(cleanPath)
+          if (file.exists()) {
+            val contentUri = FileProvider.getUriForFile(
+              context,
+              "${context.packageName}.fileprovider",
+              file
+            )
+            uris.add(contentUri)
+            primaryMimeType = getMimeType(file)
+          }
+        }
+
+        val shareIntent = if (uris.size > 1) {
+          Intent(Intent.ACTION_SEND_MULTIPLE).apply {
+            val allImages = uris.isNotEmpty() && filePaths.all {
+              val ext = File(it.removePrefix("file://")).extension.lowercase()
+              listOf("jpg", "jpeg", "png", "webp", "gif").contains(ext)
+            }
+            type = if (allImages) "image/*" else "*/*"
+            putParcelableArrayListExtra(Intent.EXTRA_STREAM, uris)
+          }
+        } else if (uris.size == 1) {
+          Intent(Intent.ACTION_SEND).apply {
+            type = primaryMimeType
+            putExtra(Intent.EXTRA_STREAM, uris[0])
+          }
+        } else {
+          Intent(Intent.ACTION_SEND).apply {
+            type = "text/plain"
+          }
+        }
+
+        if (!message.isNullOrEmpty()) {
+          shareIntent.putExtra(Intent.EXTRA_TEXT, message)
+        }
+        if (!title.isNullOrEmpty()) {
+          shareIntent.putExtra(Intent.EXTRA_SUBJECT, title)
+          shareIntent.putExtra(Intent.EXTRA_TITLE, title)
+        }
+
+        shareIntent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+
+        val chooser = Intent.createChooser(shareIntent, title ?: "Paylaş")
+        chooser.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        currentActivity.startActivity(chooser)
+
+        promise.resolve(true)
+      } catch (e: Exception) {
+        Log.e(TAG, "shareMediaFiles failed: ${e.message}", e)
+        promise.reject("SHARE_FAILED", e.message, e)
+      }
     }
   }
 }

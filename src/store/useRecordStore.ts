@@ -14,7 +14,10 @@ interface RecordStoreState {
   addRecord: (title: string, description: string, photoUris: string[], isHidden?: boolean) => Promise<number>;
   updateRecord: (id: number, title: string, description: string, photoUris: string[], isHidden?: boolean) => Promise<void>;
   toggleRecordVisibility: (id: number, hide: boolean) => Promise<void>;
+  toggleMultipleRecordVisibility: (ids: number[], hide: boolean) => Promise<void>;
+  togglePinRecords: (ids: number[], pin: boolean) => Promise<void>;
   deleteRecord: (id: number) => Promise<void>;
+  deleteMultipleRecords: (ids: number[]) => Promise<void>;
   clearAllRecords: () => Promise<void>;
   setSearchQuery: (query: string) => void;
   setDateFilter: (filter: DateFilter) => void;
@@ -73,10 +76,40 @@ export const useRecordStore = create<RecordStoreState>((set, get) => ({
     }
   },
 
+  toggleMultipleRecordVisibility: async (ids: number[], hide: boolean) => {
+    try {
+      set({ isLoading: true });
+      await db.setMultipleRecordsGalleryVisibility(ids, hide);
+      await get().loadRecords();
+    } finally {
+      set({ isLoading: false });
+    }
+  },
+
+  togglePinRecords: async (ids: number[], pin: boolean) => {
+    try {
+      set({ isLoading: true });
+      await db.setRecordsPinStatus(ids, pin);
+      await get().loadRecords();
+    } finally {
+      set({ isLoading: false });
+    }
+  },
+
   deleteRecord: async (id: number) => {
     try {
       set({ isLoading: true });
       await db.deleteRecord(id);
+      await get().loadRecords();
+    } finally {
+      set({ isLoading: false });
+    }
+  },
+
+  deleteMultipleRecords: async (ids: number[]) => {
+    try {
+      set({ isLoading: true });
+      await db.deleteMultipleRecords(ids);
       await get().loadRecords();
     } finally {
       set({ isLoading: false });
@@ -157,5 +190,13 @@ export function selectFilteredRecords(
     });
   }
 
-  return result;
+  // Sort pinned items first, then by created_at descending
+  return [...result].sort((a, b) => {
+    const aPinned = a.is_pinned ? 1 : 0;
+    const bPinned = b.is_pinned ? 1 : 0;
+    if (aPinned !== bPinned) {
+      return bPinned - aPinned;
+    }
+    return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+  });
 }

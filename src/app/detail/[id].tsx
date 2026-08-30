@@ -6,6 +6,7 @@ import {
   Alert,
   Pressable,
   ScrollView,
+  Share,
   StyleSheet,
   View,
 } from 'react-native';
@@ -20,6 +21,7 @@ import * as db from '@/database/db';
 import { useTheme } from '@/hooks/use-theme';
 import { useRecordStore } from '@/store/useRecordStore';
 import type { RecordItem } from '@/types';
+import MediaStorageModule from '../../../modules/my-module/src/MediaStorageModule';
 
 export default function RecordDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -108,6 +110,39 @@ export default function RecordDetailScreen() {
     );
   };
 
+  const handleShare = async () => {
+    if (!record) return;
+    const dateStr = new Date(record.created_at).toLocaleDateString('tr-TR');
+    const timeStr = new Date(record.created_at).toLocaleTimeString('tr-TR', {
+      hour: '2-digit',
+      minute: '2-digit',
+    });
+    const message = `📋 ${record.title}\n\n${record.description ? record.description + '\n\n' : ''}📅 Tarih: ${dateStr} ${timeStr}${
+      record.photos.length > 0 ? `\n📸 ${record.photos.length} Adet Fotoğraf` : ''
+    }`;
+
+    try {
+      if (MediaStorageModule && record.photos.length > 0) {
+        await MediaStorageModule.shareMediaFiles(record.photos, record.title, message);
+      } else {
+        await Share.share({
+          title: record.title,
+          message,
+        });
+      }
+    } catch (error) {
+      console.error('Paylaşım hatası:', error);
+      try {
+        await Share.share({
+          title: record.title,
+          message,
+        });
+      } catch {
+        Alert.alert('Hata', 'Paylaşım başlatılamadı.');
+      }
+    }
+  };
+
   if (loading) {
     return (
       <ThemedView style={styles.centerContainer}>
@@ -164,9 +199,22 @@ export default function RecordDetailScreen() {
               },
             ]}
           >
-            <ThemedText type="subtitle" style={styles.titleText}>
-              {record.title}
-            </ThemedText>
+            <View style={styles.titleShareRow}>
+              <ThemedText type="subtitle" style={styles.titleText}>
+                {record.title}
+              </ThemedText>
+              <Pressable
+                style={({ pressed }) => [
+                  styles.shareIconBtn,
+                  { backgroundColor: theme.primaryMuted },
+                  pressed && styles.buttonPressed,
+                ]}
+                onPress={handleShare}
+                hitSlop={8}
+              >
+                <MaterialIcons name="share" size={20} color={theme.primary} />
+              </Pressable>
+            </View>
 
             <View style={styles.dateRow}>
               <MaterialIcons name="event" size={16} color={theme.primary} />
@@ -346,9 +394,23 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.08,
     shadowRadius: 8,
   },
+  titleShareRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: Spacing.two,
+  },
   titleText: {
     fontSize: 22,
     fontWeight: '700',
+    flex: 1,
+  },
+  shareIconBtn: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   dateRow: {
     flexDirection: 'row',

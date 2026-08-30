@@ -12,10 +12,19 @@ import type { RecordItem } from '@/types';
 interface RecordCardProps {
   record: RecordItem;
   onPress: () => void;
+  onLongPress?: () => void;
+  isSelectionMode?: boolean;
+  isSelected?: boolean;
   onDelete?: () => void;
 }
 
-export function RecordCard({ record, onPress }: RecordCardProps) {
+export function RecordCard({
+  record,
+  onPress,
+  onLongPress,
+  isSelectionMode = false,
+  isSelected = false,
+}: RecordCardProps) {
   const theme = useTheme();
   const firstPhoto = record.photos.length > 0 ? record.photos[0] : null;
   const dateObj = new Date(record.created_at);
@@ -34,22 +43,40 @@ export function RecordCard({ record, onPress }: RecordCardProps) {
       style={({ pressed }) => [
         styles.cardContainer,
         {
-          shadowColor: theme.shadow,
+          shadowColor: isSelected ? theme.primary : theme.shadow,
         },
         pressed && styles.cardPressed,
       ]}
       onPress={onPress}
+      onLongPress={onLongPress}
+      delayLongPress={250}
     >
       <ThemedView
         type="backgroundElement"
         style={[
           styles.cardContent,
           {
-            borderColor: theme.border,
-            borderWidth: 1,
+            borderColor: isSelected
+              ? theme.primary
+              : record.is_pinned
+              ? theme.primary + '50'
+              : theme.border,
+            borderWidth: isSelected ? 2 : 1,
+            backgroundColor: isSelected ? theme.primaryMuted : theme.backgroundElement,
           },
         ]}
       >
+        {/* Selection Checkbox */}
+        {isSelectionMode && (
+          <View style={styles.selectionIndicator}>
+            <MaterialIcons
+              name={isSelected ? 'check-circle' : 'radio-button-unchecked'}
+              size={22}
+              color={isSelected ? theme.primary : theme.textMuted}
+            />
+          </View>
+        )}
+
         {/* Thumbnail or Icon */}
         <View style={[styles.thumbnailWrapper, { backgroundColor: theme.backgroundSelected }]}>
           {firstPhoto ? (
@@ -82,9 +109,16 @@ export function RecordCard({ record, onPress }: RecordCardProps) {
             <ThemedText type="smallBold" style={styles.title} numberOfLines={1}>
               {record.title}
             </ThemedText>
-            {record.is_hidden && (
-              <MaterialIcons name="visibility-off" size={16} color={theme.warning} />
-            )}
+            <View style={styles.badgeRow}>
+              {record.is_pinned && (
+                <View style={[styles.pinBadge, { backgroundColor: theme.primaryMuted }]}>
+                  <MaterialIcons name="push-pin" size={14} color={theme.primary} />
+                </View>
+              )}
+              {record.is_hidden && (
+                <MaterialIcons name="visibility-off" size={16} color={theme.warning} />
+              )}
+            </View>
           </View>
 
           {record.description ? (
@@ -102,7 +136,9 @@ export function RecordCard({ record, onPress }: RecordCardProps) {
               </ThemedText>
             </View>
 
-            <MaterialIcons name="chevron-right" size={20} color={theme.textMuted} />
+            {!isSelectionMode && (
+              <MaterialIcons name="chevron-right" size={20} color={theme.textMuted} />
+            )}
           </View>
         </View>
       </ThemedView>
@@ -129,6 +165,11 @@ const styles = StyleSheet.create({
     borderRadius: 16,
     gap: Spacing.three,
     alignItems: 'center',
+  },
+  selectionIndicator: {
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: -2,
   },
   thumbnailWrapper: {
     position: 'relative',
@@ -173,6 +214,15 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
     gap: 6,
+  },
+  badgeRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+  },
+  pinBadge: {
+    padding: 3,
+    borderRadius: 6,
   },
   title: {
     fontSize: 16,
