@@ -1,9 +1,10 @@
 import MaterialIcons from "@react-native-vector-icons/material-icons/static";
 import React from "react";
-import { ActivityIndicator, Alert, Pressable, StyleSheet } from "react-native";
+import { ActivityIndicator, Pressable, StyleSheet } from "react-native";
 
 import { ThemedText } from "@/components/themed-text";
 import { useTheme } from "@/hooks/use-theme";
+import { showAlert } from "@/store/useAlertStore";
 import { useRecordStore } from "@/store/useRecordStore";
 import { exportRecordsToZip } from "@/utils/zipExport";
 import MediaStorageModule from "../../../modules/my-module/src/MediaStorageModule";
@@ -22,10 +23,11 @@ export function ExportSection({
 
 	const handleExportAllZip = async () => {
 		if (records.length === 0) {
-			Alert.alert(
-				"Uyarı",
-				"Dışa aktarılacak herhangi bir kayıt bulunmuyor.",
-			);
+			showAlert({
+				title: "Kayıt Bulunamadı",
+				message: "Dışa aktarılacak herhangi bir anı kaydı bulunmuyor.",
+				type: "warning",
+			});
 			return;
 		}
 
@@ -37,10 +39,11 @@ export function ExportSection({
 			);
 
 			if (result.success && result.zipPath) {
-				Alert.alert(
-					"ZIP Arşivi Hazır 📦",
-					`Toplam ${records.length} kayıt, tüm fotoğraflar ve interaktif HTML görüntüleyici ZIP olarak hazırlandı.\n\nKonum: Backups/${result.zipName}\n\nArşivi şimdi paylaşmak ister misiniz?`,
-					[
+				showAlert({
+					title: "ZIP Arşivi Hazır",
+					message: `Toplam ${records.length} kayıt, tüm fotoğraflar ve interaktif HTML görüntüleyici ZIP olarak hazırlandı.\n\nKonum: Backups/${result.zipName}\n\nArşivi şimdi paylaşmak ister misiniz?`,
+					type: "success",
+					buttons: [
 						{ text: "Kapat", style: "cancel" },
 						{
 							text: "Paylaş",
@@ -55,12 +58,20 @@ export function ExportSection({
 							},
 						},
 					],
-				);
+				});
 			} else {
-				Alert.alert("Hata", result.error || "ZIP oluşturulamadı.");
+				showAlert({
+					title: "Hata",
+					message: result.error || "ZIP oluşturulamadı.",
+					type: "danger",
+				});
 			}
 		} catch (e) {
-			Alert.alert("Hata", "Dışa aktarma başarısız: " + String(e));
+			showAlert({
+				title: "Dışa Aktarma Hatası",
+				message: "İşlem sırasında bir hata oluştu: " + String(e),
+				type: "danger",
+			});
 		} finally {
 			setIsProcessing(false);
 		}

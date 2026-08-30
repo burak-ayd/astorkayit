@@ -14,6 +14,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { Spacing } from '@/constants/theme';
+import { showAlert } from '@/store/useAlertStore';
 
 interface PermissionsScreenProps {
   onAllPermissionsGranted: () => void;
@@ -52,14 +53,15 @@ export function PermissionsScreen({ onAllPermissionsGranted }: PermissionsScreen
       (cameraPermission && !cameraPermission.canAskAgain && !isCameraGranted) ||
       (mediaPermission && !mediaPermission.canAskAgain && !isMediaGranted)
     ) {
-      Alert.alert(
-        'İzin Gerekli',
-        'Bazı izinler kalıcı olarak reddedilmiş. Lütfen uygulama ayarlarından izinleri etkinleştirin.',
-        [
+      showAlert({
+        title: 'İzin Gerekli',
+        message: 'Bazı izinler kalıcı olarak reddedilmiş. Lütfen uygulama ayarlarından kamera ve medya erişimini etkinleştirin.',
+        type: 'warning',
+        buttons: [
           { text: 'İptal', style: 'cancel' },
           { text: 'Ayarları Aç', onPress: () => Linking.openSettings() },
-        ]
-      );
+        ],
+      });
     }
   };
 

@@ -20,6 +20,7 @@ import { ThemedText } from "@/components/themed-text";
 import { ThemedView } from "@/components/themed-view";
 import { Spacing } from "@/constants/theme";
 import { useTheme } from "@/hooks/use-theme";
+import { showAlert } from "@/store/useAlertStore";
 import { useRecordStore } from "@/store/useRecordStore";
 import { useSettingsStore } from "@/store/useSettingsStore";
 import { getTodayAsTitle } from "@/utils/dateUtils";
@@ -40,11 +41,12 @@ export default function AddRecordScreen() {
 		defaultHideFromGallery,
 	);
 	const [isSaving, setIsSaving] = useState(false);
+
 	const [selectedPhotoIndex, setSelectedPhotoIndex] = useState<number | null>(
 		null,
 	);
 
-	// Set default visibility based on global setting
+	// Sync with default setting when tab becomes focused or setting changes
 	useEffect(() => {
 		setHideFromGallery(defaultHideFromGallery);
 		setTitle(getTodayAsTitle());
@@ -65,10 +67,11 @@ export default function AddRecordScreen() {
 			const selectedUris = result.assets.map((a) => a.uri);
 			setPhotos((prev) => [...prev, ...selectedUris]);
 		} catch (e) {
-			Alert.alert(
-				"Hata",
-				"Fotoğraf seçilirken bir hata oluştu: " + String(e),
-			);
+			showAlert({
+				title: "Hata",
+				message: "Fotoğraf seçilirken bir hata oluştu: " + String(e),
+				type: "danger",
+			});
 		}
 	};
 
@@ -86,10 +89,11 @@ export default function AddRecordScreen() {
 			const capturedUri = result.assets[0].uri;
 			setPhotos((prev) => [...prev, capturedUri]);
 		} catch (e) {
-			Alert.alert(
-				"Hata",
-				"Fotoğraf çekilirken bir hata oluştu: " + String(e),
-			);
+			showAlert({
+				title: "Hata",
+				message: "Fotoğraf çekilirken bir hata oluştu: " + String(e),
+				type: "danger",
+			});
 		}
 	};
 
@@ -101,12 +105,20 @@ export default function AddRecordScreen() {
 		const trimmedTitle = title.trim();
 
 		if (!trimmedTitle) {
-			Alert.alert("Uyarı ⚠️", "Lütfen bir başlık giriniz.");
+			showAlert({
+				title: "Başlık Gerekli",
+				message: "Lütfen anı kaydınız için bir başlık giriniz.",
+				type: "warning",
+			});
 			return;
 		}
 
 		if (photos.length === 0) {
-			Alert.alert("Uyarı ⚠️", "Lütfen en az 1 adet fotoğraf ekleyiniz.");
+			showAlert({
+				title: "Fotoğraf Ekleyin",
+				message: "Lütfen anı kaydınız için en az 1 adet fotoğraf ekleyiniz.",
+				type: "warning",
+			});
 			return;
 		}
 
@@ -125,17 +137,23 @@ export default function AddRecordScreen() {
 			setPhotos([]);
 			setHideFromGallery(defaultHideFromGallery);
 
-			Alert.alert("Başarılı ✅", "Anı kaydınız başarıyla kaydedildi!", [
-				{
-					text: "Tamam",
-					onPress: () => router.push("/" as any),
-				},
-			]);
+			showAlert({
+				title: "Kayıt Başarılı",
+				message: "Anı kaydınız fotoğraflarıyla birlikte başarıyla kaydedildi!",
+				type: "success",
+				buttons: [
+					{
+						text: "Tamam",
+						onPress: () => router.push("/" as any),
+					},
+				],
+			});
 		} catch (e) {
-			Alert.alert(
-				"Hata ❌",
-				"Kayıt kaydedilirken bir hata oluştu: " + String(e),
-			);
+			showAlert({
+				title: "Kayıt Hatası",
+				message: "Kayıt eklenirken bir hata oluştu: " + String(e),
+				type: "danger",
+			});
 		} finally {
 			setIsSaving(false);
 		}

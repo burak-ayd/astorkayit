@@ -13,6 +13,7 @@ import {
 import { ThemedText } from "@/components/themed-text";
 import { Spacing } from "@/constants/theme";
 import { useTheme } from "@/hooks/use-theme";
+import { showAlert } from "@/store/useAlertStore";
 import { useDriveStore } from "@/store/useDriveStore";
 import { useRecordStore } from "@/store/useRecordStore";
 
@@ -49,26 +50,29 @@ export function DriveSettingsSection({
 			setIsProcessing(true);
 			const ok = await connectWithGoogle();
 			if (ok) {
-				Alert.alert(
-					"Bağlantı Başarılı 🎉",
-					"Google Drive hesabınız başarıyla bağlandı.",
-				);
+				showAlert({
+					title: "Bağlantı Başarılı",
+					message: "Google Drive hesabınız başarıyla bağlandı. Anılarınız güvende.",
+					type: "success",
+				});
 			}
 		} catch (e: any) {
-			Alert.alert(
-				"Bağlantı Hatası",
-				e.message || "Google hesabı bağlanamadı.",
-			);
+			showAlert({
+				title: "Bağlantı Hatası",
+				message: e.message || "Google hesabı bağlanamadı.",
+				type: "danger",
+			});
 		} finally {
 			setIsProcessing(false);
 		}
 	};
 
 	const handleGoogleDisconnect = () => {
-		Alert.alert(
-			"Bağlantıyı Kes",
-			"Google Drive hesabınızın bağlantısını kesmek istediğinize emin misiniz? Yerel kayıtlarınız cihazınızda korunur.",
-			[
+		showAlert({
+			title: "Bağlantıyı Kes",
+			message: "Google Drive hesabınızın bağlantısını kesmek istediğinize emin misiniz? Yerel kayıtlarınız cihazınızda korunur.",
+			type: "confirm",
+			buttons: [
 				{ text: "İptal", style: "cancel" },
 				{
 					text: "Bağlantıyı Kes",
@@ -78,7 +82,7 @@ export function DriveSettingsSection({
 					},
 				},
 			],
-		);
+		});
 	};
 
 	const handleManualDriveSync = async () => {
@@ -86,18 +90,24 @@ export function DriveSettingsSection({
 		try {
 			const res = await syncNow(records);
 			if (res.success) {
-				Alert.alert(
-					"Senkronizasyon Başarılı ☁️",
-					`${res.uploadedCount} adet kayıt ve fotoğrafları Google Drive ile eşitlendi.`,
-				);
+				showAlert({
+					title: "Senkronizasyon Başarılı",
+					message: `${res.uploadedCount} adet kayıt ve tüm fotoğrafları Google Drive ile eşitlendi.`,
+					type: "success",
+				});
 			} else {
-				Alert.alert(
-					"Senkronizasyon Uyarısı",
-					res.error || "Yedekleme tamamlanamadı.",
-				);
+				showAlert({
+					title: "Senkronizasyon Uyarısı",
+					message: res.error || "Yedekleme tamamlanamadı.",
+					type: "warning",
+				});
 			}
 		} catch (e) {
-			Alert.alert("Hata", "Senkronizasyon hatası: " + String(e));
+			showAlert({
+				title: "Senkronizasyon Hatası",
+				message: "Hata detayı: " + String(e),
+				type: "danger",
+			});
 		}
 	};
 

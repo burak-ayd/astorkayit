@@ -1,8 +1,9 @@
 import React from "react";
-import { ActivityIndicator, Alert, Pressable, StyleSheet } from "react-native";
+import { ActivityIndicator, Pressable, StyleSheet } from "react-native";
 
 import { ThemedText } from "@/components/themed-text";
 import { useTheme } from "@/hooks/use-theme";
+import { showAlert } from "@/store/useAlertStore";
 import { useRecordStore } from "@/store/useRecordStore";
 
 interface DangerZoneSectionProps {
@@ -18,10 +19,11 @@ export function DangerZoneSection({
 	const clearAllRecords = useRecordStore((s) => s.clearAllRecords);
 
 	const handleClearAll = () => {
-		Alert.alert(
-			"Tüm Verileri Sil ⚠️",
-			"Tüm anı kayıtları ve kaydedilen fotoğraflar kalıcı olarak silinecek. Bu işlem geri alınamaz!\n\nDevam etmek istiyor musunuz?",
-			[
+		showAlert({
+			title: "Tüm Verileri Sil",
+			message: "Tüm anı kayıtları ve kaydedilen fotoğraflar kalıcı olarak silinecek. Bu işlem geri alınamaz!\n\nDevam etmek istiyor musunuz?",
+			type: "danger",
+			buttons: [
 				{ text: "İptal", style: "cancel" },
 				{
 					text: "Hepsini Sil",
@@ -30,22 +32,24 @@ export function DangerZoneSection({
 						try {
 							setIsProcessing(true);
 							await clearAllRecords();
-							Alert.alert(
-								"Başarılı",
-								"Tüm kayıtlar ve fotoğraflar silindi.",
-							);
+							showAlert({
+								title: "Başarılı",
+								message: "Tüm kayıtlar ve fotoğraflar temizlendi.",
+								type: "success",
+							});
 						} catch (e) {
-							Alert.alert(
-								"Hata",
-								"Kayıtlar silinemedi: " + String(e),
-							);
+							showAlert({
+								title: "Hata",
+								message: "Kayıtlar silinemedi: " + String(e),
+								type: "danger",
+							});
 						} finally {
 							setIsProcessing(false);
 						}
 					},
 				},
 			],
-		);
+		});
 	};
 
 	return (

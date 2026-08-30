@@ -19,6 +19,7 @@ import { ThemedView } from '@/components/themed-view';
 import { Spacing } from '@/constants/theme';
 import * as db from '@/database/db';
 import { useTheme } from '@/hooks/use-theme';
+import { showAlert } from '@/store/useAlertStore';
 import { useRecordStore } from '@/store/useRecordStore';
 import type { RecordItem } from '@/types';
 import MediaStorageModule from '../../../modules/my-module/src/MediaStorageModule';
@@ -65,14 +66,19 @@ export default function RecordDetailScreen() {
       await toggleRecordVisibility(record.id, newHiddenState);
       fetchRecord();
 
-      Alert.alert(
-        newHiddenState ? 'Galeriden Gizlendi 🙈' : 'Galeride Görünür 👁️',
-        newHiddenState
+      showAlert({
+        title: newHiddenState ? 'Galeriden Gizlendi 🙈' : 'Galeride Görünür 👁️',
+        message: newHiddenState
           ? 'Bu kaydın fotoğrafları cihaz galerisinden gizlendi (.nomedia eklendi).'
-          : 'Bu kaydın fotoğrafları cihaz galerisinde görünür yapıldı.'
-      );
+          : 'Bu kaydın fotoğrafları cihaz galerisinde görünür yapıldı.',
+        type: 'info',
+      });
     } catch (e) {
-      Alert.alert('Hata', 'Görünürlük ayarı değiştirilemedi: ' + String(e));
+      showAlert({
+        title: 'Hata',
+        message: 'Görünürlük ayarı değiştirilemedi: ' + String(e),
+        type: 'danger',
+      });
     } finally {
       setIsTogglingVisibility(false);
     }
@@ -81,10 +87,11 @@ export default function RecordDetailScreen() {
   const handleDelete = () => {
     if (!record) return;
 
-    Alert.alert(
-      'Kaydı Sil 🗑️',
-      `"${record.title}" başlıklı anı kaydını silmek istediğinize emin misiniz? Bu işlem geri alınamaz.`,
-      [
+    showAlert({
+      title: 'Kaydı Sil 🗑️',
+      message: `"${record.title}" başlıklı anı kaydını silmek istediğinize emin misiniz? Bu işlem geri alınamaz.`,
+      type: 'danger',
+      buttons: [
         { text: 'İptal', style: 'cancel' },
         {
           text: 'Sil',
@@ -93,21 +100,30 @@ export default function RecordDetailScreen() {
             try {
               setIsDeleting(true);
               await deleteRecord(record.id);
-              Alert.alert('Silindi', 'Kayıt başarıyla silindi.', [
-                {
-                  text: 'Tamam',
-                  onPress: () => router.back(),
-                },
-              ]);
+              showAlert({
+                title: 'Silindi',
+                message: 'Kayıt başarıyla silindi.',
+                type: 'success',
+                buttons: [
+                  {
+                    text: 'Tamam',
+                    onPress: () => router.back(),
+                  },
+                ],
+              });
             } catch (e) {
-              Alert.alert('Hata', 'Kayıt silinirken bir hata oluştu: ' + String(e));
+              showAlert({
+                title: 'Hata',
+                message: 'Kayıt silinirken bir hata oluştu: ' + String(e),
+                type: 'danger',
+              });
             } finally {
               setIsDeleting(false);
             }
           },
         },
-      ]
-    );
+      ],
+    });
   };
 
   const handleShare = async () => {
@@ -138,7 +154,11 @@ export default function RecordDetailScreen() {
           message,
         });
       } catch {
-        Alert.alert('Hata', 'Paylaşım başlatılamadı.');
+        showAlert({
+          title: 'Hata',
+          message: 'Paylaşım başlatılamadı.',
+          type: 'danger',
+        });
       }
     }
   };

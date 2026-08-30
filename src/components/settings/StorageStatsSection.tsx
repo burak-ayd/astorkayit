@@ -1,10 +1,11 @@
 import MaterialIcons from "@react-native-vector-icons/material-icons/static";
 import React from "react";
-import { Alert, Platform, Pressable, StyleSheet, View } from "react-native";
+import { Platform, Pressable, StyleSheet, View } from "react-native";
 
 import { ThemedText } from "@/components/themed-text";
 import { Spacing } from "@/constants/theme";
 import { useTheme } from "@/hooks/use-theme";
+import { showAlert } from "@/store/useAlertStore";
 import { useRecordStore } from "@/store/useRecordStore";
 import MediaStorageModule from "../../../modules/my-module/src/MediaStorageModule";
 
@@ -27,12 +28,17 @@ export function StorageStatsSection({
 		try {
 			setIsProcessing(true);
 			await MediaStorageModule.scanFile("Files");
-			Alert.alert(
-				"Tamamlandı ✅",
-				"Tüm medya dosyaları Android MediaStore ile eşitlendi.",
-			);
+			showAlert({
+				title: "Eşitleme Tamamlandı",
+				message: "Tüm medya dosyaları Android MediaStore ile başarıyla eşitlendi.",
+				type: "success",
+			});
 		} catch (e) {
-			Alert.alert("Hata", String(e));
+			showAlert({
+				title: "Eşitleme Hatası",
+				message: String(e),
+				type: "danger",
+			});
 		} finally {
 			setIsProcessing(false);
 		}

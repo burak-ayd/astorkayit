@@ -12,6 +12,8 @@ import { useRecordStore } from '@/store/useRecordStore';
 import { useSettingsStore } from '@/store/useSettingsStore';
 import MediaStorageModule from '../../modules/my-module/src/MediaStorageModule';
 
+import { CustomAlertModal } from '@/components/ui/CustomAlertModal';
+
 export default function RootLayout() {
   const theme = useTheme();
   const colorScheme = useColorScheme();
@@ -81,6 +83,7 @@ export default function RootLayout() {
           }}
         />
       </Stack>
+      <CustomAlertModal />
     </>
   );
 }

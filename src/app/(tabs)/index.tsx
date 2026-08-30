@@ -20,6 +20,7 @@ import { ThemedText } from "@/components/themed-text";
 import { ThemedView } from "@/components/themed-view";
 import { Spacing } from "@/constants/theme";
 import { useTheme } from "@/hooks/use-theme";
+import { showAlert } from "@/store/useAlertStore";
 import { selectFilteredRecords, useRecordStore } from "@/store/useRecordStore";
 import { exportRecordsToZip } from "@/utils/zipExport";
 import MediaStorageModule from "../../../modules/my-module/src/MediaStorageModule";
@@ -133,12 +134,13 @@ export default function HomeScreen() {
 	const handleToggleVisibility = () => {
 		if (selectedIds.length === 0) return;
 		const nextHiddenState = !areAllSelectedHidden;
-		Alert.alert(
-			nextHiddenState ? "Galeride Gizle" : "Galeride Göster",
-			`Seçilen ${selectedIds.length} kaydın fotoğrafları cihaz galerisinde ${
+		showAlert({
+			title: nextHiddenState ? "Galeride Gizle" : "Galeride Göster",
+			message: `Seçilen ${selectedIds.length} kaydın fotoğrafları cihaz galerisinde ${
 				nextHiddenState ? "gizlensin mi?" : "gösterilsin mi?"
 			}`,
-			[
+			type: "confirm",
+			buttons: [
 				{ text: "Vazgeç", style: "cancel" },
 				{
 					text: "Evet",
@@ -151,7 +153,7 @@ export default function HomeScreen() {
 					},
 				},
 			],
-		);
+		});
 	};
 
 	const handleShare = async () => {
@@ -214,7 +216,11 @@ export default function HomeScreen() {
 					message,
 				});
 			} catch {
-				Alert.alert("Hata", "Paylaşım başlatılamadı.");
+				showAlert({
+					title: "Hata",
+					message: "Paylaşım başlatılamadı.",
+					type: "danger",
+				});
 			}
 		}
 	};
@@ -230,10 +236,11 @@ export default function HomeScreen() {
 			);
 
 			if (result.success && result.zipPath) {
-				Alert.alert(
-					"ZIP Arşivi Hazır 📦",
-					`${selectedRecords.length} adet kayıt, fotoğraflar ve interaktif HTML görüntüleyici ZIP olarak arşivlendi.\n\nDosyayı şimdi paylaşmak ister misiniz?`,
-					[
+				showAlert({
+					title: "ZIP Arşivi Hazır",
+					message: `${selectedRecords.length} adet kayıt, fotoğraflar ve interaktif HTML görüntüleyici ZIP olarak arşivlendi.\n\nDosyayı şimdi paylaşmak ister misiniz?`,
+					type: "success",
+					buttons: [
 						{ text: "Kapat", style: "cancel" },
 						{
 							text: "Paylaş",
@@ -248,22 +255,31 @@ export default function HomeScreen() {
 							},
 						},
 					],
-				);
+				});
 				setSelectedIds([]);
 			} else {
-				Alert.alert("Hata", result.error || "ZIP oluşturulamadı.");
+				showAlert({
+					title: "Hata",
+					message: result.error || "ZIP oluşturulamadı.",
+					type: "danger",
+				});
 			}
 		} catch (e) {
-			Alert.alert("Hata", "Dışa aktarma sırasında bir sorun oluştu: " + String(e));
+			showAlert({
+				title: "Dışa Aktarma Hatası",
+				message: "Dışa aktarma sırasında bir sorun oluştu: " + String(e),
+				type: "danger",
+			});
 		}
 	};
 
 	const handleDelete = () => {
 		if (selectedIds.length === 0) return;
-		Alert.alert(
-			"Kayıtları Sil",
-			`Seçilen ${selectedIds.length} adet kaydı silmek istediğinize emin misiniz? Bu işlem geri alınamaz.`,
-			[
+		showAlert({
+			title: "Kayıtları Sil",
+			message: `Seçilen ${selectedIds.length} adet kaydı silmek istediğinize emin misiniz? Bu işlem geri alınamaz.`,
+			type: "danger",
+			buttons: [
 				{ text: "Vazgeç", style: "cancel" },
 				{
 					text: "Sil",
@@ -274,7 +290,7 @@ export default function HomeScreen() {
 					},
 				},
 			],
-		);
+		});
 	};
 
 	return (
