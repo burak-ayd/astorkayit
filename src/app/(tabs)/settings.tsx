@@ -1,4 +1,5 @@
 import MaterialIcons from "@react-native-vector-icons/material-icons/static";
+import { Image } from "expo-image";
 import { useCallback, useEffect, useState } from "react";
 import {
 	ActivityIndicator,
@@ -16,6 +17,7 @@ import { ThemedText } from "@/components/themed-text";
 import { ThemedView } from "@/components/themed-view";
 import { Spacing } from "@/constants/theme";
 import { useTheme } from "@/hooks/use-theme";
+import { useDriveStore } from "@/store/useDriveStore";
 import { useRecordStore } from "@/store/useRecordStore";
 import { ThemeMode, useSettingsStore } from "@/store/useSettingsStore";
 import { exportRecordsToZip } from "@/utils/zipExport";
@@ -38,6 +40,24 @@ export default function SettingsScreen() {
 	const setThemeMode = useSettingsStore((s) => s.setThemeMode);
 	const loadSettings = useSettingsStore((s) => s.loadSettings);
 
+	// Google Drive Store
+	const isDriveConnected = useDriveStore((s) => s.isConnected);
+	const driveUser = useDriveStore((s) => s.user);
+	const autoSyncEnabled = useDriveStore((s) => s.autoSyncEnabled);
+	const syncOnWifiOnly = useDriveStore((s) => s.syncOnWifiOnly);
+	const deleteFromDriveOnLocalDelete = useDriveStore(
+		(s) => s.deleteFromDriveOnLocalDelete,
+	);
+	const lastSyncTime = useDriveStore((s) => s.lastSyncTime);
+	const isSyncing = useDriveStore((s) => s.isSyncing);
+	const connectWithGoogle = useDriveStore((s) => s.connectWithGoogle);
+	const disconnectDrive = useDriveStore((s) => s.disconnect);
+	const setAutoSync = useDriveStore((s) => s.setAutoSync);
+	const setSyncWifiOnly = useDriveStore((s) => s.setSyncWifiOnly);
+	const setDeletePolicy = useDriveStore((s) => s.setDeletePolicy);
+	const syncNow = useDriveStore((s) => s.syncNow);
+	const loadDriveSettings = useDriveStore((s) => s.loadDriveSettings);
+
 	const [isProcessing, setIsProcessing] = useState(false);
 	const [basePath, setBasePath] = useState<string>("");
 
@@ -54,8 +74,9 @@ export default function SettingsScreen() {
 	useEffect(() => {
 		loadStats();
 		loadSettings();
+		loadDriveSettings();
 		checkStatus();
-	}, [loadStats, loadSettings, checkStatus]);
+	}, [loadStats, loadSettings, loadDriveSettings, checkStatus]);
 
 	const handleToggleDefaultHide = async (val: boolean) => {
 		await setDefaultHideFromGallery(val);
@@ -63,6 +84,63 @@ export default function SettingsScreen() {
 
 	const handleSelectTheme = async (mode: ThemeMode) => {
 		await setThemeMode(mode);
+	};
+
+	const handleGoogleConnect = async () => {
+		try {
+			setIsProcessing(true);
+			const ok = await connectWithGoogle();
+			if (ok) {
+				Alert.alert(
+					"Bağlantı Başarılı 🎉",
+					"Google Drive hesabınız başarıyla bağlandı. Kayıtlarınızı senkronize edebilirsiniz.",
+				);
+			}
+		} catch (e: any) {
+			Alert.alert(
+				"Bağlantı Hatası",
+				e.message || "Google hesabı bağlanamadı.",
+			);
+		} finally {
+			setIsProcessing(false);
+		}
+	};
+
+	const handleGoogleDisconnect = () => {
+		Alert.alert(
+			"Bağlantıyı Kes",
+			"Google Drive hesabınızın bağlantısını kesmek istediğinize emin misiniz? Cihazdaki yerel verileriniz etkilenmez.",
+			[
+				{ text: "İptal", style: "cancel" },
+				{
+					text: "Bağlantıyı Kes",
+					style: "destructive",
+					onPress: async () => {
+						await disconnectDrive();
+					},
+				},
+			],
+		);
+	};
+
+	const handleManualDriveSync = async () => {
+		if (!isDriveConnected) return;
+		try {
+			const res = await syncNow(records);
+			if (res.success) {
+				Alert.alert(
+					"Senkronizasyon Başarılı ☁️",
+					`${res.uploadedCount} adet kayıt Google Drive'a başarıyla yedeklendi.`,
+				);
+			} else {
+				Alert.alert(
+					"Senkronizasyon Uyarısı",
+					res.error || "Yedekleme tamamlanamadı.",
+				);
+			}
+		} catch (e) {
+			Alert.alert("Hata", "Senkronizasyon hatası: " + String(e));
+		}
 	};
 
 	const handleExportAllZip = async () => {
@@ -164,6 +242,22 @@ export default function SettingsScreen() {
 		return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
 	};
 
+	const formatSyncDate = (isoStr: string | null) => {
+		if (!isoStr) return "Henüz senkronize edilmedi";
+		try {
+			const d = new Date(isoStr);
+			return d.toLocaleDateString("tr-TR", {
+				day: "numeric",
+				month: "short",
+				year: "numeric",
+				hour: "2-digit",
+				minute: "2-digit",
+			});
+		} catch {
+			return isoStr;
+		}
+	};
+
 	const cardStyle = [
 		styles.card,
 		{
@@ -182,7 +276,7 @@ export default function SettingsScreen() {
 					{/* Header */}
 					<View style={styles.header}>
 						<ThemedText type="subtitle" style={styles.headerTitle}>
-							Ayarlar & Depolama
+							Ayarlar & Bulut Senkronizasyon
 						</ThemedText>
 						<ThemedText
 							type="small"
@@ -190,9 +284,328 @@ export default function SettingsScreen() {
 								styles.headerSub,
 								{ color: theme.textSecondary },
 							]}>
-							Uygulama tercihleri ve depolama yönetimi
+							Google Drive, depolama ve uygulama tercihleri
 						</ThemedText>
 					</View>
+
+					{/* Google Drive Sync Card */}
+					<ThemedView type="backgroundElement" style={cardStyle}>
+						<View style={styles.cardHeader}>
+							<MaterialIcons
+								name="cloud-sync"
+								size={24}
+								color={
+									isDriveConnected
+										? theme.success
+										: theme.primary
+								}
+							/>
+							<View style={styles.cardHeaderTexts}>
+								<ThemedText
+									type="smallBold"
+									style={styles.cardTitle}>
+									Google Drive Senkronizasyonu
+								</ThemedText>
+								<ThemedText
+									type="small"
+									style={[
+										styles.cardSubtitle,
+										{ color: theme.textSecondary },
+									]}>
+									{isDriveConnected
+										? "Google Drive bağlı • Offline First"
+										: "Çevrimdışı öncelikli • İsteğe bağlı bulut yedekleme"}
+								</ThemedText>
+							</View>
+							{isDriveConnected && (
+								<View
+									style={[
+										styles.connectedPill,
+										{ backgroundColor: theme.successMuted },
+									]}>
+									<MaterialIcons
+										name="check-circle"
+										size={14}
+										color={theme.success}
+									/>
+									<ThemedText
+										style={[
+											styles.connectedPillText,
+											{ color: theme.success },
+										]}>
+										Bağlı
+									</ThemedText>
+								</View>
+							)}
+						</View>
+
+						{isDriveConnected && driveUser ? (
+							<View style={styles.driveContent}>
+								{/* User Info Bar */}
+								<View
+									style={[
+										styles.userBar,
+										{
+											backgroundColor: theme.background,
+											borderColor: theme.border,
+											borderWidth: 1,
+										},
+									]}>
+									{driveUser.picture ? (
+										<Image
+											source={{ uri: driveUser.picture }}
+											style={styles.userAvatar}
+										/>
+									) : (
+										<View
+											style={[
+												styles.userAvatarPlaceholder,
+												{
+													backgroundColor:
+														theme.primaryMuted,
+												},
+											]}>
+											<MaterialIcons
+												name="account-circle"
+												size={24}
+												color={theme.primary}
+											/>
+										</View>
+									)}
+									<View style={styles.userBarTexts}>
+										<ThemedText
+											type="smallBold"
+											numberOfLines={1}>
+											{driveUser.name}
+										</ThemedText>
+										<ThemedText
+											type="small"
+											style={{
+												color: theme.textSecondary,
+												fontSize: 11,
+											}}
+											numberOfLines={1}>
+											{driveUser.email}
+										</ThemedText>
+									</View>
+									<Pressable
+										style={({ pressed }) => [
+											styles.disconnectBtn,
+											pressed && styles.buttonPressed,
+										]}
+										onPress={handleGoogleDisconnect}>
+										<ThemedText
+											style={[
+												styles.disconnectBtnText,
+												{ color: theme.danger },
+											]}>
+											Çıkış Yap
+										</ThemedText>
+									</Pressable>
+								</View>
+
+								{/* Last Sync Info & Manual Sync Button */}
+								<View style={styles.syncActionRow}>
+									<View style={styles.lastSyncWrapper}>
+										<ThemedText
+											type="small"
+											style={[
+												styles.lastSyncLabel,
+												{ color: theme.textSecondary },
+											]}>
+											Son Senkronizasyon:
+										</ThemedText>
+										<ThemedText
+											type="smallBold"
+											style={[
+												styles.lastSyncValue,
+												{ color: theme.primary },
+											]}>
+											{formatSyncDate(lastSyncTime)}
+										</ThemedText>
+									</View>
+
+									<Pressable
+										style={({ pressed }) => [
+											styles.syncNowBtn,
+											{ backgroundColor: theme.primary },
+											pressed && styles.buttonPressed,
+											isSyncing && styles.buttonDisabled,
+										]}
+										onPress={handleManualDriveSync}
+										disabled={isSyncing}>
+										{isSyncing ? (
+											<ActivityIndicator
+												size="small"
+												color="#ffffff"
+											/>
+										) : (
+											<>
+												<MaterialIcons
+													name="sync"
+													size={16}
+													color="#ffffff"
+												/>
+												<ThemedText
+													style={
+														styles.syncNowBtnText
+													}>
+													Şimdi Eşitle
+												</ThemedText>
+											</>
+										)}
+									</Pressable>
+								</View>
+
+								{/* Toggle Settings */}
+								<View
+									style={[
+										styles.togglesWrapper,
+										{ borderTopColor: theme.border },
+									]}>
+									{/* Auto Sync Toggle */}
+									<View style={styles.toggleRow}>
+										<View style={styles.toggleTexts}>
+											<ThemedText type="smallBold">
+												Otomatik Senkronizasyon (Oto
+												Upload)
+											</ThemedText>
+											<ThemedText
+												type="small"
+												style={[
+													styles.toggleDesc,
+													{
+														color: theme.textSecondary,
+													},
+												]}>
+												{autoSyncEnabled
+													? "Yeni veya düzenlenen anılar anında Google Drive'a yüklenir."
+													: 'Kapalı • Yalnızca "Şimdi Eşitle" butonuna basıldığında yüklenir (Offline First).'}
+											</ThemedText>
+										</View>
+										<Switch
+											value={autoSyncEnabled}
+											onValueChange={setAutoSync}
+											trackColor={{
+												false: theme.border,
+												true: theme.primary,
+											}}
+											thumbColor="#ffffff"
+										/>
+									</View>
+
+									{/* Wi-Fi Only Toggle */}
+									<View style={styles.toggleRow}>
+										<View style={styles.toggleTexts}>
+											<ThemedText type="smallBold">
+												Sadece Wi-Fi ile Yükle
+											</ThemedText>
+											<ThemedText
+												type="small"
+												style={[
+													styles.toggleDesc,
+													{
+														color: theme.textSecondary,
+													},
+												]}>
+												{syncOnWifiOnly
+													? "Mobil veri korunur; yükleme sadece Wi-Fi bağlıyken yapılır."
+													: "Wi-Fi veya Mobil Veri üzerinden senkronizasyona izin verilir."}
+											</ThemedText>
+										</View>
+										<Switch
+											value={syncOnWifiOnly}
+											onValueChange={setSyncWifiOnly}
+											trackColor={{
+												false: theme.border,
+												true: theme.primary,
+											}}
+											thumbColor="#ffffff"
+										/>
+									</View>
+
+									{/* Deletion Policy Toggle */}
+									<View style={styles.toggleRow}>
+										<View style={styles.toggleTexts}>
+											<ThemedText type="smallBold">
+												Silinenleri Drive'dan da Sil
+											</ThemedText>
+											<ThemedText
+												type="small"
+												style={[
+													styles.toggleDesc,
+													{
+														color: theme.textSecondary,
+													},
+												]}>
+												{deleteFromDriveOnLocalDelete
+													? "Cihazdan silinen kayıtlar Google Drive'dan da silinir."
+													: "Kapalı • Silinen kayıtlar Google Drive'da kalıcı yedek olarak saklanır."}
+											</ThemedText>
+										</View>
+										<Switch
+											value={deleteFromDriveOnLocalDelete}
+											onValueChange={setDeletePolicy}
+											trackColor={{
+												false: theme.border,
+												true: theme.warning,
+											}}
+											thumbColor="#ffffff"
+										/>
+									</View>
+								</View>
+							</View>
+						) : (
+							<View style={styles.driveLoginPrompt}>
+								<ThemedText
+									type="small"
+									style={[
+										styles.offlineFirstDesc,
+										{ color: theme.textSecondary },
+									]}>
+									Uygulama{" "}
+									<ThemedText type="smallBold">
+										Offline-first (önce çevrimdışı)
+									</ThemedText>{" "}
+									çalışır. Tüm verileriniz cihazınızda
+									saklanır. Google hesabınızla giriş yaparak
+									kayıtlarınızı Google Drive'a
+									yedekleyebilirsiniz.
+								</ThemedText>
+
+								<Pressable
+									style={({ pressed }) => [
+										styles.googleLoginBtn,
+										{ backgroundColor: theme.primary },
+										pressed && styles.buttonPressed,
+										isProcessing && styles.buttonDisabled,
+									]}
+									onPress={handleGoogleConnect}
+									disabled={isProcessing}>
+									{isProcessing ? (
+										<ActivityIndicator
+											size="small"
+											color="#ffffff"
+										/>
+									) : (
+										<>
+											<MaterialIcons
+												name="login"
+												size={18}
+												color="#ffffff"
+											/>
+											<ThemedText
+												style={
+													styles.googleLoginBtnText
+												}>
+												Google Hesabı ile Bağlan
+											</ThemedText>
+										</>
+									)}
+								</Pressable>
+							</View>
+						)}
+					</ThemedView>
 
 					{/* Theme & Appearance Card */}
 					<ThemedView type="backgroundElement" style={cardStyle}>
@@ -740,6 +1153,119 @@ const styles = StyleSheet.create({
 	},
 	cardSubtitle: {
 		fontSize: 12,
+	},
+	connectedPill: {
+		flexDirection: "row",
+		alignItems: "center",
+		gap: 4,
+		paddingHorizontal: 8,
+		paddingVertical: 4,
+		borderRadius: 8,
+	},
+	connectedPillText: {
+		fontSize: 11,
+		fontWeight: "700",
+	},
+	driveContent: {
+		gap: Spacing.three,
+	},
+	userBar: {
+		flexDirection: "row",
+		alignItems: "center",
+		padding: Spacing.two,
+		borderRadius: 14,
+		gap: Spacing.two,
+	},
+	userAvatar: {
+		width: 36,
+		height: 36,
+		borderRadius: 18,
+	},
+	userAvatarPlaceholder: {
+		width: 36,
+		height: 36,
+		borderRadius: 18,
+		alignItems: "center",
+		justifyContent: "center",
+	},
+	userBarTexts: {
+		flex: 1,
+	},
+	disconnectBtn: {
+		paddingHorizontal: 10,
+		paddingVertical: 6,
+	},
+	disconnectBtnText: {
+		fontSize: 12,
+		fontWeight: "600",
+	},
+	syncActionRow: {
+		flexDirection: "row",
+		alignItems: "center",
+		justifyContent: "space-between",
+		gap: Spacing.two,
+	},
+	lastSyncWrapper: {
+		flex: 1,
+	},
+	lastSyncLabel: {
+		fontSize: 11,
+	},
+	lastSyncValue: {
+		fontSize: 12,
+		marginTop: 2,
+	},
+	syncNowBtn: {
+		flexDirection: "row",
+		alignItems: "center",
+		gap: 6,
+		paddingHorizontal: 14,
+		paddingVertical: 9,
+		borderRadius: 12,
+	},
+	syncNowBtnText: {
+		color: "#ffffff",
+		fontSize: 12,
+		fontWeight: "700",
+	},
+	togglesWrapper: {
+		borderTopWidth: 1,
+		paddingTop: Spacing.two,
+		gap: Spacing.three,
+	},
+	toggleRow: {
+		flexDirection: "row",
+		alignItems: "center",
+		justifyContent: "space-between",
+		gap: Spacing.two,
+	},
+	toggleTexts: {
+		flex: 1,
+		gap: 2,
+	},
+	toggleDesc: {
+		fontSize: 11,
+		lineHeight: 15,
+	},
+	driveLoginPrompt: {
+		gap: Spacing.three,
+	},
+	offlineFirstDesc: {
+		fontSize: 12,
+		lineHeight: 17,
+	},
+	googleLoginBtn: {
+		flexDirection: "row",
+		alignItems: "center",
+		justifyContent: "center",
+		gap: 8,
+		paddingVertical: 12,
+		borderRadius: 14,
+	},
+	googleLoginBtnText: {
+		color: "#ffffff",
+		fontSize: 14,
+		fontWeight: "700",
 	},
 	themeSelectorRow: {
 		flexDirection: "row",
