@@ -1,234 +1,242 @@
-import * as db from "@/database/db";
-import type { DateFilter, RecordItem, StorageStats } from "@/types";
-import { create } from "zustand";
+import { create } from 'zustand';
+import type { RecordItem, DateFilter, StorageStats } from '@/types';
+import * as db from '@/database/db';
+import { useDriveStore } from '@/store/useDriveStore';
 
 interface RecordStoreState {
-	records: RecordItem[];
-	isLoading: boolean;
-	searchQuery: string;
-	dateFilter: DateFilter;
-	stats: StorageStats;
+  records: RecordItem[];
+  isLoading: boolean;
+  searchQuery: string;
+  dateFilter: DateFilter;
+  stats: StorageStats;
 
-	// Actions
-	loadRecords: () => Promise<void>;
-	addRecord: (
-		title: string,
-		description: string,
-		photoUris: string[],
-		isHidden?: boolean,
-	) => Promise<number>;
-	updateRecord: (
-		id: number,
-		title: string,
-		description: string,
-		photoUris: string[],
-		isHidden?: boolean,
-	) => Promise<void>;
-	toggleRecordVisibility: (id: number, hide: boolean) => Promise<void>;
-	toggleMultipleRecordVisibility: (
-		ids: number[],
-		hide: boolean,
-	) => Promise<void>;
-	togglePinRecords: (ids: number[], pin: boolean) => Promise<void>;
-	deleteRecord: (id: number) => Promise<void>;
-	deleteMultipleRecords: (ids: number[]) => Promise<void>;
-	clearAllRecords: () => Promise<void>;
-	setSearchQuery: (query: string) => void;
-	setDateFilter: (filter: DateFilter) => void;
-	resetFilters: () => void;
-	loadStats: () => Promise<void>;
+  // Actions
+  loadRecords: () => Promise<void>;
+  addRecord: (title: string, description: string, photoUris: string[], isHidden?: boolean) => Promise<number>;
+  updateRecord: (id: number, title: string, description: string, photoUris: string[], isHidden?: boolean) => Promise<void>;
+  toggleRecordVisibility: (id: number, hide: boolean) => Promise<void>;
+  toggleMultipleRecordVisibility: (ids: number[], hide: boolean) => Promise<void>;
+  togglePinRecords: (ids: number[], pin: boolean) => Promise<void>;
+  deleteRecord: (id: number) => Promise<void>;
+  deleteMultipleRecords: (ids: number[]) => Promise<void>;
+  clearAllRecords: () => Promise<void>;
+  setSearchQuery: (query: string) => void;
+  setDateFilter: (filter: DateFilter) => void;
+  resetFilters: () => void;
+  loadStats: () => Promise<void>;
 }
 
 export const useRecordStore = create<RecordStoreState>((set, get) => ({
-	records: [],
-	isLoading: false,
-	searchQuery: "",
-	dateFilter: { startDate: null, endDate: null },
-	stats: { totalRecords: 0, totalPhotos: 0, totalSizeBytes: 0 },
+  records: [],
+  isLoading: false,
+  searchQuery: '',
+  dateFilter: { startDate: null, endDate: null },
+  stats: { totalRecords: 0, totalPhotos: 0, totalSizeBytes: 0 },
 
-	loadRecords: async () => {
-		try {
-			set({ isLoading: true });
-			const records = await db.getAllRecords();
-			set({ records });
-			await get().loadStats();
-		} catch (error) {
-			console.error("Error loading records:", error);
-		} finally {
-			set({ isLoading: false });
-		}
-	},
+  loadRecords: async () => {
+    try {
+      set({ isLoading: true });
+      const records = await db.getAllRecords();
+      set({ records });
+      await get().loadStats();
+    } catch (error) {
+      console.error('Error loading records:', error);
+    } finally {
+      set({ isLoading: false });
+    }
+  },
 
-	addRecord: async (
-		title: string,
-		description: string,
-		photoUris: string[],
-		isHidden: boolean = false,
-	) => {
-		try {
-			set({ isLoading: true });
-			const id = await db.insertRecord(
-				title,
-				description,
-				photoUris,
-				isHidden,
-			);
-			await get().loadRecords();
-			return id;
-		} finally {
-			set({ isLoading: false });
-		}
-	},
+  addRecord: async (title: string, description: string, photoUris: string[], isHidden: boolean = false) => {
+    try {
+      set({ isLoading: true });
+      const id = await db.insertRecord(title, description, photoUris, isHidden);
+      await get().loadRecords();
 
-	updateRecord: async (
-		id: number,
-		title: string,
-		description: string,
-		photoUris: string[],
-		isHidden?: boolean,
-	) => {
-		try {
-			set({ isLoading: true });
-			await db.updateRecord(id, title, description, photoUris, isHidden);
-			await get().loadRecords();
-		} finally {
-			set({ isLoading: false });
-		}
-	},
+      // Trigger auto-sync if enabled
+      const driveStore = useDriveStore.getState();
+      if (driveStore.isConnected && driveStore.autoSyncEnabled) {
+        driveStore.syncNow(get().records).catch((e) => console.warn('Auto sync failed:', e));
+      }
 
-	toggleRecordVisibility: async (id: number, hide: boolean) => {
-		try {
-			set({ isLoading: true });
-			await db.setRecordGalleryVisibility(id, hide);
-			await get().loadRecords();
-		} finally {
-			set({ isLoading: false });
-		}
-	},
+      return id;
+    } finally {
+      set({ isLoading: false });
+    }
+  },
 
-	toggleMultipleRecordVisibility: async (ids: number[], hide: boolean) => {
-		try {
-			set({ isLoading: true });
-			await db.setMultipleRecordsGalleryVisibility(ids, hide);
-			await get().loadRecords();
-		} finally {
-			set({ isLoading: false });
-		}
-	},
+  updateRecord: async (id: number, title: string, description: string, photoUris: string[], isHidden?: boolean) => {
+    try {
+      set({ isLoading: true });
+      await db.updateRecord(id, title, description, photoUris, isHidden);
+      await get().loadRecords();
 
-	togglePinRecords: async (ids: number[], pin: boolean) => {
-		try {
-			set({ isLoading: true });
-			await db.setRecordsPinStatus(ids, pin);
-			await get().loadRecords();
-		} finally {
-			set({ isLoading: false });
-		}
-	},
+      // Trigger auto-sync if enabled
+      const driveStore = useDriveStore.getState();
+      if (driveStore.isConnected && driveStore.autoSyncEnabled) {
+        driveStore.syncNow(get().records).catch((e) => console.warn('Auto sync failed:', e));
+      }
+    } finally {
+      set({ isLoading: false });
+    }
+  },
 
-	deleteRecord: async (id: number) => {
-		try {
-			set({ isLoading: true });
-			await db.deleteRecord(id);
-			await get().loadRecords();
-		} finally {
-			set({ isLoading: false });
-		}
-	},
+  toggleRecordVisibility: async (id: number, hide: boolean) => {
+    try {
+      set({ isLoading: true });
+      await db.setRecordGalleryVisibility(id, hide);
+      await get().loadRecords();
+    } finally {
+      set({ isLoading: false });
+    }
+  },
 
-	deleteMultipleRecords: async (ids: number[]) => {
-		try {
-			set({ isLoading: true });
-			await db.deleteMultipleRecords(ids);
-			await get().loadRecords();
-		} finally {
-			set({ isLoading: false });
-		}
-	},
+  toggleMultipleRecordVisibility: async (ids: number[], hide: boolean) => {
+    try {
+      set({ isLoading: true });
+      await db.setMultipleRecordsGalleryVisibility(ids, hide);
+      await get().loadRecords();
+    } finally {
+      set({ isLoading: false });
+    }
+  },
 
-	clearAllRecords: async () => {
-		try {
-			set({ isLoading: true });
-			await db.deleteAllRecords();
-			await get().loadRecords();
-		} finally {
-			set({ isLoading: false });
-		}
-	},
+  togglePinRecords: async (ids: number[], pin: boolean) => {
+    try {
+      set({ isLoading: true });
+      await db.setRecordsPinStatus(ids, pin);
+      await get().loadRecords();
+    } finally {
+      set({ isLoading: false });
+    }
+  },
 
-	setSearchQuery: (searchQuery: string) => {
-		set({ searchQuery });
-	},
+  deleteRecord: async (id: number) => {
+    try {
+      set({ isLoading: true });
+      const record = get().records.find((r) => r.id === id);
+      await db.deleteRecord(id);
+      await get().loadRecords();
 
-	setDateFilter: (dateFilter: DateFilter) => {
-		set({ dateFilter });
-	},
+      // Handle Drive delete policy and auto-sync
+      const driveStore = useDriveStore.getState();
+      if (driveStore.isConnected) {
+        if (record && driveStore.deleteFromDriveOnLocalDelete) {
+          driveStore.handleRecordDeleteSync(record.title, record.id).catch(console.warn);
+        }
+        if (driveStore.autoSyncEnabled) {
+          driveStore.syncNow(get().records).catch(console.warn);
+        }
+      }
+    } finally {
+      set({ isLoading: false });
+    }
+  },
 
-	resetFilters: () => {
-		set({
-			searchQuery: "",
-			dateFilter: { startDate: null, endDate: null },
-		});
-	},
+  deleteMultipleRecords: async (ids: number[]) => {
+    try {
+      set({ isLoading: true });
+      const targetRecords = get().records.filter((r) => ids.includes(r.id));
+      await db.deleteMultipleRecords(ids);
+      await get().loadRecords();
 
-	loadStats: async () => {
-		try {
-			const stats = await db.getStorageStats();
-			set({ stats });
-		} catch (error) {
-			console.error("Error loading storage stats:", error);
-		}
-	},
+      // Handle Drive delete policy and auto-sync
+      const driveStore = useDriveStore.getState();
+      if (driveStore.isConnected) {
+        if (driveStore.deleteFromDriveOnLocalDelete) {
+          for (const r of targetRecords) {
+            driveStore.handleRecordDeleteSync(r.title, r.id).catch(console.warn);
+          }
+        }
+        if (driveStore.autoSyncEnabled) {
+          driveStore.syncNow(get().records).catch(console.warn);
+        }
+      }
+    } finally {
+      set({ isLoading: false });
+    }
+  },
+
+  clearAllRecords: async () => {
+    try {
+      set({ isLoading: true });
+      await db.deleteAllRecords();
+      await get().loadRecords();
+    } finally {
+      set({ isLoading: false });
+    }
+  },
+
+  setSearchQuery: (searchQuery: string) => {
+    set({ searchQuery });
+  },
+
+  setDateFilter: (dateFilter: DateFilter) => {
+    set({ dateFilter });
+  },
+
+  resetFilters: () => {
+    set({
+      searchQuery: '',
+      dateFilter: { startDate: null, endDate: null },
+    });
+  },
+
+  loadStats: async () => {
+    try {
+      const stats = await db.getStorageStats();
+      set({ stats });
+    } catch (error) {
+      console.error('Error loading storage stats:', error);
+    }
+  },
 }));
 
 // Helper selector for filtered records
 export function selectFilteredRecords(
-	records: RecordItem[],
-	searchQuery: string,
-	dateFilter: DateFilter,
+  records: RecordItem[],
+  searchQuery: string,
+  dateFilter: DateFilter
 ): RecordItem[] {
-	let result = records;
+  let result = records;
 
-	// Search query filter (title + description)
-	if (searchQuery.trim().length > 0) {
-		const q = searchQuery.toLowerCase().trim();
-		result = result.filter(
-			(r) =>
-				r.title.toLowerCase().includes(q) ||
-				r.description.toLowerCase().includes(q),
-		);
-	}
+  // Search query filter (title + description)
+  if (searchQuery.trim().length > 0) {
+    const q = searchQuery.toLowerCase().trim();
+    result = result.filter(
+      (r) =>
+        r.title.toLowerCase().includes(q) ||
+        r.description.toLowerCase().includes(q)
+    );
+  }
 
-	// Date range filter
-	if (dateFilter.startDate || dateFilter.endDate) {
-		result = result.filter((r) => {
-			const recordDate = new Date(r.created_at);
+  // Date range filter
+  if (dateFilter.startDate || dateFilter.endDate) {
+    result = result.filter((r) => {
+      const recordDate = new Date(r.created_at);
 
-			if (dateFilter.startDate) {
-				const start = new Date(dateFilter.startDate);
-				start.setHours(0, 0, 0, 0);
-				if (recordDate < start) return false;
-			}
+      if (dateFilter.startDate) {
+        const start = new Date(dateFilter.startDate);
+        start.setHours(0, 0, 0, 0);
+        if (recordDate < start) return false;
+      }
 
-			if (dateFilter.endDate) {
-				const end = new Date(dateFilter.endDate);
-				end.setHours(23, 59, 59, 999);
-				if (recordDate > end) return false;
-			}
+      if (dateFilter.endDate) {
+        const end = new Date(dateFilter.endDate);
+        end.setHours(23, 59, 59, 999);
+        if (recordDate > end) return false;
+      }
 
-			return true;
-		});
-	}
+      return true;
+    });
+  }
 
-	// Sort pinned items first, then by created_at descending
-	return [...result].sort((a, b) => {
-		const aPinned = a.is_pinned ? 1 : 0;
-		const bPinned = b.is_pinned ? 1 : 0;
-		if (aPinned !== bPinned) {
-			return bPinned - aPinned;
-		}
-		return (
-			new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
-		);
-	});
+  // Sort pinned items first, then by created_at descending
+  return [...result].sort((a, b) => {
+    const aPinned = a.is_pinned ? 1 : 0;
+    const bPinned = b.is_pinned ? 1 : 0;
+    if (aPinned !== bPinned) {
+      return bPinned - aPinned;
+    }
+    return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+  });
 }
