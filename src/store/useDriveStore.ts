@@ -197,10 +197,10 @@ export const useDriveStore = create<DriveState>((set, get) => ({
     if (!isConnected || !accessToken || !deleteFromDriveOnLocalDelete) return;
 
     try {
-      const parentFolderId = await getOrCreateDriveFolder(accessToken, 'AstorKayit');
-      // If folder or files were named with record id
-      const folderName = `record_${recordId}_${recordTitle}`;
-      await deleteFileFromDrive(accessToken, folderName, parentFolderId);
+      const rootFolderId = await getOrCreateDriveFolder(accessToken, 'AstorKayit');
+      const filesFolderId = await getOrCreateDriveFolder(accessToken, 'Files', rootFolderId);
+      const folderName = db.getRecordFolderName(recordId, recordTitle);
+      await deleteFileFromDrive(accessToken, folderName, filesFolderId);
     } catch (e) {
       console.warn('Delete sync error:', e);
     }

@@ -1,335 +1,483 @@
-import * as AuthSession from 'expo-auth-session';
-import * as Network from 'expo-network';
-import * as WebBrowser from 'expo-web-browser';
-import { Platform } from 'react-native';
-import type { RecordItem } from '@/types';
-import MediaStorageModule from '../../modules/my-module/src/MediaStorageModule';
+import { getRecordFolderName } from "@/database/db";
+import type { RecordItem } from "@/types";
+import { generateExportHtml } from "@/utils/zipExport";
+import * as Network from "expo-network";
+import {
+	GoogleOneTapSignIn,
+	isCancelledResponse,
+	isNoSavedCredentialFoundResponse,
+	isSuccessResponse,
+} from "react-native-nitro-google-signin";
 
-WebBrowser.maybeCompleteAuthSession();
+// Drive API için gerekli izin kapsamı
+const DRIVE_SCOPE = "https://www.googleapis.com/auth/drive.file";
 
-// Google OAuth Endpoints & Configuration
-const DISCOVERY = {
-  authorizationEndpoint: 'https://accounts.google.com/o/oauth2/v2/auth',
-  tokenEndpoint: 'https://oauth2.googleapis.com/token',
-  revocationEndpoint: 'https://oauth2.googleapis.com/revoke',
-  userInfoEndpoint: 'https://www.googleapis.com/oauth2/v2/userinfo',
-};
-
-const SCOPES = [
-  'openid',
-  'https://www.googleapis.com/auth/userinfo.email',
-  'https://www.googleapis.com/auth/userinfo.profile',
-  'https://www.googleapis.com/auth/drive.file',
-];
+// Google Cloud Console'dan alınan Web Client ID
+const DEFAULT_WEB_CLIENT_ID =
+	"454523910715-mle95po88u9fifd7rd8hofk2cit7r242.apps.googleusercontent.com";
 
 export interface GoogleUser {
-  id: string;
-  email: string;
-  name: string;
-  picture?: string;
+	id: string;
+	email: string;
+	name: string;
+	picture?: string;
 }
 
 export interface SyncResult {
-  success: boolean;
-  uploadedCount: number;
-  error?: string;
-  syncedAt: string;
+	success: boolean;
+	uploadedCount: number;
+	error?: string;
+	syncedAt: string;
 }
 
-// Default Fallback OAuth Client IDs (can be configured via app settings)
-const DEFAULT_CLIENT_ID = '331818228308-0123456789abcdefghijklmnopqrstuv.apps.googleusercontent.com';
+/**
+ * Nitro Google Sign-In modülünü yapılandırır
+ */
+export function configureGoogleSignIn(customWebClientId?: string) {
+	GoogleOneTapSignIn.configure({
+		webClientId: customWebClientId || DEFAULT_WEB_CLIENT_ID,
+		scopes: [DRIVE_SCOPE],
+		offlineAccess: true,
+	});
+}
 
 /**
- * Initiates Google OAuth2 login with PKCE
+ * Yerel Android/iOS arayüzü ile Google girişi yapar ve Drive için accessToken alır
  */
-export async function authenticateWithGoogle(customClientId?: string): Promise<{
-  accessToken: string;
-  refreshToken?: string;
-  expiresIn?: number;
-  user: GoogleUser;
+export async function authenticateWithGoogle(
+	customWebClientId?: string,
+): Promise<{
+	accessToken: string;
+	user: GoogleUser;
 } | null> {
-  const clientId = customClientId || DEFAULT_CLIENT_ID;
-  const redirectUri = AuthSession.makeRedirectUri({
-    scheme: 'astorkayit',
-    path: 'oauth',
-  });
+	try {
+		configureGoogleSignIn(customWebClientId);
 
-  const request = new AuthSession.AuthRequest({
-    clientId,
-    scopes: SCOPES,
-    redirectUri,
-    responseType: AuthSession.ResponseType.Token,
-    usePKCE: false,
-    extraParams: {
-      access_type: 'offline',
-      prompt: 'consent',
-    },
-  });
+		// Google Play Services kontrolü
+		await GoogleOneTapSignIn.checkPlayServices();
 
-  const result = await request.promptAsync(DISCOVERY);
+		// 1. One Tap Sign-In denemesi
+		let response = await GoogleOneTapSignIn.signIn();
 
-  if (result.type === 'success' && result.params) {
-    const accessToken = result.params.access_token;
-    const refreshToken = result.params.refresh_token;
-    const expiresIn = result.params.expires_in ? parseInt(result.params.expires_in, 10) : 3600;
+		// 2. Kayıtlı hesap bulunamazsa hesap oluşturma/seçme diyaloğunu aç
+		if (isNoSavedCredentialFoundResponse(response)) {
+			response = await GoogleOneTapSignIn.createAccount();
+		}
 
-    // Fetch user info
-    const userRes = await fetch(DISCOVERY.userInfoEndpoint, {
-      headers: { Authorization: `Bearer ${accessToken}` },
-    });
+		// 3. Hala hesap seçilmediyse açık hesap seçici ekranını (Explicit Sign-In) göster
+		if (isNoSavedCredentialFoundResponse(response)) {
+			response = await GoogleOneTapSignIn.presentExplicitSignIn();
+		}
 
-    if (!userRes.ok) {
-      throw new Error('Kullanıcı bilgileri alınamadı.');
-    }
+		// Kullanıcı iptal ettiyse
+		if (isCancelledResponse(response)) {
+			console.log("Kullanıcı Google girişini iptal etti.");
+			return null;
+		}
 
-    const userData = await userRes.json();
-    return {
-      accessToken,
-      refreshToken,
-      expiresIn,
-      user: {
-        id: userData.id,
-        email: userData.email,
-        name: userData.name || userData.email,
-        picture: userData.picture,
-      },
-    };
-  }
+		if (isSuccessResponse(response)) {
+			const userData = response.data?.user;
 
-  return null;
+			// Drive API kapsamları için yetki ve accessToken al
+			await GoogleOneTapSignIn.requestScopes([DRIVE_SCOPE]);
+			const tokenResult = await GoogleOneTapSignIn.getTokens();
+
+			if (!tokenResult.accessToken) {
+				throw new Error(
+					"Google Drive erişim belirteci (accessToken) alınamadı.",
+				);
+			}
+
+			return {
+				accessToken: tokenResult.accessToken,
+				user: {
+					id: userData?.id || "",
+					email: userData?.email || "",
+					name: userData?.name || userData?.email || "",
+					picture: userData?.photo || undefined,
+				},
+			};
+		}
+
+		return null;
+	} catch (error) {
+		console.error("Google Sign-In Hatası:", error);
+		throw error;
+	}
 }
 
 /**
- * Checks if current network connection is allowed for syncing based on settings
+ * Oturumu kapatır
  */
-export async function isNetworkAllowedForSync(wifiOnly: boolean): Promise<{ allowed: boolean; reason?: string }> {
-  try {
-    const netState = await Network.getNetworkStateAsync();
-
-    if (!netState.isConnected || !netState.isInternetReachable) {
-      return { allowed: false, reason: 'İnternet bağlantısı bulunamadı.' };
-    }
-
-    if (wifiOnly && netState.type !== Network.NetworkStateType.WIFI) {
-      return {
-        allowed: false,
-        reason: 'Sadece Wi-Fi ile yükleme seçeneği aktif, hücresel veridesiniz.',
-      };
-    }
-
-    return { allowed: true };
-  } catch {
-    return { allowed: true };
-  }
+export async function signOutFromGoogle(): Promise<void> {
+	try {
+		await GoogleOneTapSignIn.signOut();
+	} catch (error) {
+		console.warn("Google çıkış hatası:", error);
+	}
 }
 
 /**
- * Finds or creates the dedicated "AstorKayit" folder in user's Google Drive
+ * Senkronizasyon öncesi ağ bağlantısını denetler
  */
-export async function getOrCreateDriveFolder(accessToken: string, folderName: string = 'AstorKayit'): Promise<string> {
-  const query = encodeURIComponent(`name = '${folderName}' and mimeType = 'application/vnd.google-apps.folder' and trashed = false`);
-  const listRes = await fetch(
-    `https://www.googleapis.com/drive/v3/files?q=${query}&spaces=drive&fields=files(id, name)`,
-    {
-      headers: { Authorization: `Bearer ${accessToken}` },
-    }
-  );
+export async function isNetworkAllowedForSync(
+	wifiOnly: boolean,
+): Promise<{ allowed: boolean; reason?: string }> {
+	try {
+		const netState = await Network.getNetworkStateAsync();
 
-  if (!listRes.ok) {
-    throw new Error('Google Drive klasör araması başarısız oldu.');
-  }
+		if (!netState.isConnected || !netState.isInternetReachable) {
+			return {
+				allowed: false,
+				reason: "İnternet bağlantısı bulunamadı.",
+			};
+		}
 
-  const listData = await listRes.json();
-  if (listData.files && listData.files.length > 0) {
-    return listData.files[0].id;
-  }
+		if (wifiOnly && netState.type !== Network.NetworkStateType.WIFI) {
+			return {
+				allowed: false,
+				reason: "Sadece Wi-Fi ile yükleme seçeneği aktif, hücresel veridesiniz.",
+			};
+		}
 
-  // Create folder
-  const createRes = await fetch('https://www.googleapis.com/drive/v3/files', {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${accessToken}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      name: folderName,
-      mimeType: 'application/vnd.google-apps.folder',
-    }),
-  });
-
-  if (!createRes.ok) {
-    throw new Error('Google Drive klasörü oluşturulamadı.');
-  }
-
-  const createData = await createRes.json();
-  return createData.id;
+		return { allowed: true };
+	} catch {
+		return { allowed: true };
+	}
 }
 
 /**
- * Uploads a file (multipart metadata + content) to Google Drive
+ * Google Drive içinde belirli bir klasörü bulur veya oluşturur
  */
-export async function uploadFileToDrive(
-  accessToken: string,
-  fileName: string,
-  mimeType: string,
-  content: string,
-  parentFolderId?: string
+export async function getOrCreateDriveFolder(
+	accessToken: string,
+	folderName: string,
+	parentFolderId?: string,
+): Promise<string> {
+	const parentQuery = parentFolderId ? ` and '${parentFolderId}' in parents` : "";
+	const query = encodeURIComponent(
+		`name = '${folderName}' and mimeType = 'application/vnd.google-apps.folder'${parentQuery} and trashed = false`,
+	);
+	const listRes = await fetch(
+		`https://www.googleapis.com/drive/v3/files?q=${query}&spaces=drive&fields=files(id, name)`,
+		{
+			headers: { Authorization: `Bearer ${accessToken}` },
+		},
+	);
+
+	if (!listRes.ok) {
+		throw new Error(`Google Drive klasör araması başarısız (${folderName}).`);
+	}
+
+	const listData = await listRes.json();
+	if (listData.files && listData.files.length > 0) {
+		return listData.files[0].id;
+	}
+
+	// Klasör yoksa oluştur
+	const bodyPayload: Record<string, any> = {
+		name: folderName,
+		mimeType: "application/vnd.google-apps.folder",
+	};
+	if (parentFolderId) {
+		bodyPayload.parents = [parentFolderId];
+	}
+
+	const createRes = await fetch("https://www.googleapis.com/drive/v3/files", {
+		method: "POST",
+		headers: {
+			Authorization: `Bearer ${accessToken}`,
+			"Content-Type": "application/json",
+		},
+		body: JSON.stringify(bodyPayload),
+	});
+
+	if (!createRes.ok) {
+		throw new Error(`Google Drive klasörü oluşturulamadı (${folderName}).`);
+	}
+
+	const createData = await createRes.json();
+	return createData.id;
+}
+
+/**
+ * Google Drive'a metin tabanlı (HTML, JSON) dosya yükler veya günceller
+ */
+export async function uploadTextFileToDrive(
+	accessToken: string,
+	fileName: string,
+	mimeType: string,
+	content: string,
+	parentFolderId?: string,
 ): Promise<{ id: string; name: string }> {
-  // First check if a file with the same name already exists in the folder
-  let existingFileId: string | null = null;
-  if (parentFolderId) {
-    const q = encodeURIComponent(`name = '${fileName}' and '${parentFolderId}' in parents and trashed = false`);
-    const checkRes = await fetch(`https://www.googleapis.com/drive/v3/files?q=${q}&fields=files(id)`, {
-      headers: { Authorization: `Bearer ${accessToken}` },
-    });
-    if (checkRes.ok) {
-      const data = await checkRes.json();
-      if (data.files && data.files.length > 0) {
-        existingFileId = data.files[0].id;
-      }
-    }
-  }
+	let existingFileId: string | null = null;
+	if (parentFolderId) {
+		const q = encodeURIComponent(
+			`name = '${fileName}' and '${parentFolderId}' in parents and trashed = false`,
+		);
+		const checkRes = await fetch(
+			`https://www.googleapis.com/drive/v3/files?q=${q}&fields=files(id)`,
+			{
+				headers: { Authorization: `Bearer ${accessToken}` },
+			},
+		);
+		if (checkRes.ok) {
+			const data = await checkRes.json();
+			if (data.files && data.files.length > 0) {
+				existingFileId = data.files[0].id;
+			}
+		}
+	}
 
-  const metadata: any = {
-    name: fileName,
-    mimeType,
-  };
-  if (parentFolderId && !existingFileId) {
-    metadata.parents = [parentFolderId];
-  }
+	const metadata: Record<string, any> = {
+		name: fileName,
+		mimeType,
+	};
+	if (parentFolderId && !existingFileId) {
+		metadata.parents = [parentFolderId];
+	}
 
-  const boundary = '-------314159265358979323846';
-  const delimiter = `\r\n--${boundary}\r\n`;
-  const closeDelimiter = `\r\n--${boundary}--`;
+	const boundary = "-------AstorKayitBoundary314159";
+	const delimiter = `\r\n--${boundary}\r\n`;
+	const closeDelimiter = `\r\n--${boundary}--`;
 
-  const multipartRequestBody =
-    delimiter +
-    'Content-Type: application/json; charset=UTF-8\r\n\r\n' +
-    JSON.stringify(metadata) +
-    delimiter +
-    `Content-Type: ${mimeType}\r\n\r\n` +
-    content +
-    closeDelimiter;
+	const multipartRequestBody =
+		delimiter +
+		"Content-Type: application/json; charset=UTF-8\r\n\r\n" +
+		JSON.stringify(metadata) +
+		delimiter +
+		`Content-Type: ${mimeType}; charset=UTF-8\r\n\r\n` +
+		content +
+		closeDelimiter;
 
-  const url = existingFileId
-    ? `https://www.googleapis.com/upload/drive/v3/files/${existingFileId}?uploadType=multipart`
-    : 'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart';
+	const url = existingFileId
+		? `https://www.googleapis.com/upload/drive/v3/files/${existingFileId}?uploadType=multipart`
+		: "https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart";
 
-  const res = await fetch(url, {
-    method: existingFileId ? 'PATCH' : 'POST',
-    headers: {
-      Authorization: `Bearer ${accessToken}`,
-      'Content-Type': `multipart/related; boundary=${boundary}`,
-    },
-    body: multipartRequestBody,
-  });
+	const res = await fetch(url, {
+		method: existingFileId ? "PATCH" : "POST",
+		headers: {
+			Authorization: `Bearer ${accessToken}`,
+			"Content-Type": `multipart/related; boundary=${boundary}`,
+		},
+		body: multipartRequestBody,
+	});
 
-  if (!res.ok) {
-    const errText = await res.text();
-    throw new Error(`Dosya yüklenemedi: ${errText}`);
-  }
+	if (!res.ok) {
+		const errText = await res.text();
+		throw new Error(`Dosya yüklenemedi (${fileName}): ${errText}`);
+	}
 
-  return await res.json();
+	return await res.json();
 }
 
 /**
- * Deletes a file or folder from Google Drive by name in the app folder
+ * Google Drive'a yerel medya/fotoğraf dosyasını yükler (Zaten varsa tekrar yüklemez)
  */
-export async function deleteFileFromDrive(accessToken: string, fileName: string, parentFolderId: string): Promise<boolean> {
-  try {
-    const q = encodeURIComponent(`name = '${fileName}' and '${parentFolderId}' in parents and trashed = false`);
-    const checkRes = await fetch(`https://www.googleapis.com/drive/v3/files?q=${q}&fields=files(id)`, {
-      headers: { Authorization: `Bearer ${accessToken}` },
-    });
+export async function uploadMediaFileToDrive(
+	accessToken: string,
+	localFilePath: string,
+	fileName: string,
+	parentFolderId: string,
+): Promise<{ id: string; name: string }> {
+	// Aynı isimde dosya bu klasörde zaten var mı kontrol et (Bant genişliği tasarrufu)
+	const q = encodeURIComponent(
+		`name = '${fileName}' and '${parentFolderId}' in parents and trashed = false`,
+	);
+	const checkRes = await fetch(
+		`https://www.googleapis.com/drive/v3/files?q=${q}&fields=files(id, name)`,
+		{
+			headers: { Authorization: `Bearer ${accessToken}` },
+		},
+	);
 
-    if (checkRes.ok) {
-      const data = await checkRes.json();
-      if (data.files && data.files.length > 0) {
-        for (const f of data.files) {
-          await fetch(`https://www.googleapis.com/drive/v3/files/${f.id}`, {
-            method: 'DELETE',
-            headers: { Authorization: `Bearer ${accessToken}` },
-          });
-        }
-        return true;
-      }
-    }
-  } catch (e) {
-    console.warn('Drive deletion error:', e);
-  }
-  return false;
+	if (checkRes.ok) {
+		const checkData = await checkRes.json();
+		if (checkData.files && checkData.files.length > 0) {
+			return checkData.files[0];
+		}
+	}
+
+	const uri = localFilePath.startsWith("file://")
+		? localFilePath
+		: `file://${localFilePath}`;
+
+	let mimeType = "image/jpeg";
+	const lower = fileName.toLowerCase();
+	if (lower.endsWith(".png")) mimeType = "image/png";
+	else if (lower.endsWith(".webp")) mimeType = "image/webp";
+	else if (lower.endsWith(".mp4")) mimeType = "video/mp4";
+
+	const fileRes = await fetch(uri);
+	const blob = await fileRes.blob();
+
+	const metadata = {
+		name: fileName,
+		parents: [parentFolderId],
+		mimeType,
+	};
+
+	const formData = new FormData();
+	formData.append(
+		"metadata",
+		new Blob([JSON.stringify(metadata)], {
+			type: "application/json; charset=UTF-8",
+		}) as any,
+	);
+	formData.append("file", blob);
+
+	const uploadRes = await fetch(
+		"https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart",
+		{
+			method: "POST",
+			headers: {
+				Authorization: `Bearer ${accessToken}`,
+			},
+			body: formData,
+		},
+	);
+
+	if (!uploadRes.ok) {
+		const err = await uploadRes.text();
+		throw new Error(`Fotoğraf yüklenemedi (${fileName}): ${err}`);
+	}
+
+	return await uploadRes.json();
 }
 
 /**
- * Main sync operation: Synchronizes local records and metadata JSON to Google Drive
+ * Google Drive'dan dosya veya klasör siler
+ */
+export async function deleteFileFromDrive(
+	accessToken: string,
+	fileName: string,
+	parentFolderId: string,
+): Promise<boolean> {
+	try {
+		const q = encodeURIComponent(
+			`name = '${fileName}' and '${parentFolderId}' in parents and trashed = false`,
+		);
+		const checkRes = await fetch(
+			`https://www.googleapis.com/drive/v3/files?q=${q}&fields=files(id)`,
+			{
+				headers: { Authorization: `Bearer ${accessToken}` },
+			},
+		);
+
+		if (checkRes.ok) {
+			const data = await checkRes.json();
+			if (data.files && data.files.length > 0) {
+				for (const f of data.files) {
+					await fetch(
+						`https://www.googleapis.com/drive/v3/files/${f.id}`,
+						{
+							method: "DELETE",
+							headers: { Authorization: `Bearer ${accessToken}` },
+						},
+					);
+				}
+				return true;
+			}
+		}
+	} catch (e) {
+		console.warn("Drive deletion error:", e);
+	}
+	return false;
+}
+
+/**
+ * ZIP yapısını referans alarak klasör yapısını bozmadan tüm kayıtları, HTML görüntüleyiciyi
+ * ve fotoğrafları doğrudan Google Drive'a senkronize eder (Ziplemeden saf REST API ile)
  */
 export async function syncAllRecordsToDrive(
-  accessToken: string,
-  records: RecordItem[],
-  wifiOnly: boolean
+	accessToken: string,
+	records: RecordItem[],
+	wifiOnly: boolean,
 ): Promise<SyncResult> {
-  // 1. Check network eligibility
-  const netCheck = await isNetworkAllowedForSync(wifiOnly);
-  if (!netCheck.allowed) {
-    return {
-      success: false,
-      uploadedCount: 0,
-      error: netCheck.reason,
-      syncedAt: new Date().toISOString(),
-    };
-  }
+	const netCheck = await isNetworkAllowedForSync(wifiOnly);
+	if (!netCheck.allowed) {
+		return {
+			success: false,
+			uploadedCount: 0,
+			error: netCheck.reason,
+			syncedAt: new Date().toISOString(),
+		};
+	}
 
-  try {
-    // 2. Get or create root AstorKayit folder in Google Drive
-    const parentFolderId = await getOrCreateDriveFolder(accessToken, 'AstorKayit');
+	try {
+		// 1. Google Drive içinde ana 'AstorKayit' klasörünü oluştur/bul
+		const rootFolderId = await getOrCreateDriveFolder(
+			accessToken,
+			"AstorKayit",
+		);
 
-    // 3. Upload backup manifest / records json
-    const manifest = {
-      app: 'AstorKayit',
-      version: '1.0.2',
-      synced_at: new Date().toISOString(),
-      record_count: records.length,
-      records: records.map((r) => ({
-        id: r.id,
-        title: r.title,
-        description: r.description,
-        is_hidden: r.is_hidden,
-        is_pinned: r.is_pinned,
-        photos_count: r.photos.length,
-        created_at: r.created_at,
-        updated_at: r.updated_at,
-      })),
-    };
+		// 2. Google Drive içinde 'Files' medya klasörünü oluştur/bul
+		const filesFolderId = await getOrCreateDriveFolder(
+			accessToken,
+			"Files",
+			rootFolderId,
+		);
 
-    await uploadFileToDrive(
-      accessToken,
-      'records_manifest.json',
-      'application/json',
-      JSON.stringify(manifest, null, 2),
-      parentFolderId
-    );
+		// 3. 'index.html' interaktif HTML görüntüleyiciyi yükle/güncelle
+		const htmlContent = generateExportHtml(
+			records,
+			`Astor Kayıt Arşivi (${records.length} Kayıt)`,
+		);
+		await uploadTextFileToDrive(
+			accessToken,
+			"index.html",
+			"text/html",
+			htmlContent,
+			rootFolderId,
+		);
 
-    // 4. Upload full JSON database backup
-    await uploadFileToDrive(
-      accessToken,
-      'astor_kayit_backup.json',
-      'application/json',
-      JSON.stringify(records, null, 2),
-      parentFolderId
-    );
+		// 4. 'records.json' veritabanı JSON yedeğini yükle/güncelle
+		await uploadTextFileToDrive(
+			accessToken,
+			"records.json",
+			"application/json",
+			JSON.stringify(records, null, 2),
+			rootFolderId,
+		);
 
-    return {
-      success: true,
-      uploadedCount: records.length,
-      syncedAt: new Date().toISOString(),
-    };
-  } catch (error) {
-    console.error('Google Drive sync failed:', error);
-    return {
-      success: false,
-      uploadedCount: 0,
-      error: String(error),
-      syncedAt: new Date().toISOString(),
-    };
-  }
+		// 5. Her kaydın klasörünü (Files/record_<id>_<title>) oluştur ve fotoğraflarını yükle
+		for (const record of records) {
+			const recordFolderName = getRecordFolderName(record.id, record.title);
+			const recordFolderId = await getOrCreateDriveFolder(
+				accessToken,
+				recordFolderName,
+				filesFolderId,
+			);
+
+			// Kayda ait tüm fotoğrafları yükle
+			if (record.photos && record.photos.length > 0) {
+				for (const photoPath of record.photos) {
+					if (!photoPath) continue;
+					const parts = photoPath.split("/");
+					const fileName = parts[parts.length - 1];
+
+					await uploadMediaFileToDrive(
+						accessToken,
+						photoPath,
+						fileName,
+						recordFolderId,
+					);
+				}
+			}
+		}
+
+		return {
+			success: true,
+			uploadedCount: records.length,
+			syncedAt: new Date().toISOString(),
+		};
+	} catch (error) {
+		console.error("Google Drive sync failed:", error);
+		return {
+			success: false,
+			uploadedCount: 0,
+			error: String(error),
+			syncedAt: new Date().toISOString(),
+		};
+	}
 }
