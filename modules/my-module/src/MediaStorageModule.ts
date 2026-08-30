@@ -48,6 +48,12 @@ declare class MediaStorageModuleType extends NativeModule<{}> {
     title?: string,
     message?: string
   ): Promise<boolean>;
+  createZipExport(
+    zipRelativePath: string,
+    htmlContent: string,
+    jsonContent: string,
+    folderRelativePaths: string[]
+  ): Promise<{ path: string; name: string; size: number; success: boolean }>;
 }
 
 // Try to load the native module, return null if not available (e.g. Expo Go)

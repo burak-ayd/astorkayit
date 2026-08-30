@@ -21,6 +21,7 @@ import { ThemedView } from "@/components/themed-view";
 import { Spacing } from "@/constants/theme";
 import { useTheme } from "@/hooks/use-theme";
 import { selectFilteredRecords, useRecordStore } from "@/store/useRecordStore";
+import { exportRecordsToZip } from "@/utils/zipExport";
 import MediaStorageModule from "../../../modules/my-module/src/MediaStorageModule";
 
 export default function HomeScreen() {
@@ -218,13 +219,43 @@ export default function HomeScreen() {
 		}
 	};
 
-	const handleExport = () => {
+	const handleExport = async () => {
 		if (selectedIds.length === 0) return;
-		Alert.alert(
-			"Dışarı Aktar",
-			`Seçilen ${selectedIds.length} kayıt için ZIP olarak dışarı aktarma özelliği bir sonraki güncellemede eklenecektir.`,
-			[{ text: "Tamam" }],
-		);
+		const selectedRecords = records.filter((r) => selectedIds.includes(r.id));
+
+		try {
+			const result = await exportRecordsToZip(
+				selectedRecords,
+				`${appName || "Astor Kayıt"} - Seçilen Kayıtlar (${selectedRecords.length})`,
+			);
+
+			if (result.success && result.zipPath) {
+				Alert.alert(
+					"ZIP Arşivi Hazır 📦",
+					`${selectedRecords.length} adet kayıt, fotoğraflar ve interaktif HTML görüntüleyici ZIP olarak arşivlendi.\n\nDosyayı şimdi paylaşmak ister misiniz?`,
+					[
+						{ text: "Kapat", style: "cancel" },
+						{
+							text: "Paylaş",
+							onPress: async () => {
+								if (MediaStorageModule && result.zipPath) {
+									await MediaStorageModule.shareMediaFiles(
+										[result.zipPath],
+										result.zipName,
+										`Astor Kayıtları Arşivi (${selectedRecords.length} Kayıt)`,
+									);
+								}
+							},
+						},
+					],
+				);
+				setSelectedIds([]);
+			} else {
+				Alert.alert("Hata", result.error || "ZIP oluşturulamadı.");
+			}
+		} catch (e) {
+			Alert.alert("Hata", "Dışa aktarma sırasında bir sorun oluştu: " + String(e));
+		}
 	};
 
 	const handleDelete = () => {

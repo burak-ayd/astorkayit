@@ -9,9 +9,14 @@ import androidx.core.content.FileProvider
 import expo.modules.kotlin.Promise
 import expo.modules.kotlin.modules.Module
 import expo.modules.kotlin.modules.ModuleDefinition
+import java.io.BufferedInputStream
+import java.io.BufferedOutputStream
 import java.io.File
+import java.io.FileInputStream
 import java.io.FileOutputStream
 import java.io.InputStream
+import java.util.zip.ZipEntry
+import java.util.zip.ZipOutputStream
 
 class MediaStorageModule : Module() {
   private val TAG = "MediaStorageModule"
@@ -527,6 +532,94 @@ class MediaStorageModule : Module() {
       } catch (e: Exception) {
         Log.e(TAG, "shareMediaFiles failed: ${e.message}", e)
         promise.reject("SHARE_FAILED", e.message, e)
+      }
+    }
+
+    // Create a ZIP export containing HTML viewer, JSON metadata, and requested record folders
+    AsyncFunction("createZipExport") { zipRelativePath: String, htmlContent: String, jsonContent: String, folderRelativePaths: List<String>, promise: Promise ->
+      try {
+        val context = appContext.reactContext
+          ?: throw Exception("React context is not available")
+        val mediaDirs = context.externalMediaDirs
+        if (mediaDirs.isEmpty() || mediaDirs[0] == null) {
+          throw Exception("External media directory is not available")
+        }
+
+        val basePath = File(mediaDirs[0], "AstorKayit")
+        val zipFile = File(basePath, zipRelativePath)
+
+        // Ensure parent directory (e.g. Backups) exists
+        zipFile.parentFile?.mkdirs()
+
+        if (zipFile.exists()) {
+          zipFile.delete()
+        }
+
+        val rootPrefix = "${zipFile.nameWithoutExtension}/"
+
+        FileOutputStream(zipFile).use { fos ->
+          BufferedOutputStream(fos).use { bos ->
+            ZipOutputStream(bos).use { zos ->
+              // 1. Add index.html inside root folder
+              if (htmlContent.isNotEmpty()) {
+                val htmlEntry = ZipEntry("${rootPrefix}index.html")
+                zos.putNextEntry(htmlEntry)
+                zos.write(htmlContent.toByteArray(Charsets.UTF_8))
+                zos.closeEntry()
+              }
+
+              // 2. Add records.json inside root folder
+              if (jsonContent.isNotEmpty()) {
+                val jsonEntry = ZipEntry("${rootPrefix}records.json")
+                zos.putNextEntry(jsonEntry)
+                zos.write(jsonContent.toByteArray(Charsets.UTF_8))
+                zos.closeEntry()
+              }
+
+              // 3. Add each folder's files inside root folder
+              for (relFolderPath in folderRelativePaths) {
+                val folder = File(basePath, relFolderPath)
+                if (folder.exists() && folder.isDirectory) {
+                  val files = folder.walkTopDown().filter { it.isFile && it.name != ".nomedia" }.toList()
+                  for (file in files) {
+                    val entryRelativePath = file.relativeTo(basePath).path.replace('\\', '/')
+                    val entry = ZipEntry("$rootPrefix$entryRelativePath")
+                    zos.putNextEntry(entry)
+                    FileInputStream(file).use { fis ->
+                      BufferedInputStream(fis).use { bis ->
+                        bis.copyTo(zos)
+                      }
+                    }
+                    zos.closeEntry()
+                  }
+                }
+              }
+
+              zos.flush()
+            }
+          }
+        }
+
+        // Scan the generated zip file with MediaScannerConnection
+        MediaScannerConnection.scanFile(
+          context.applicationContext,
+          arrayOf(zipFile.absolutePath),
+          arrayOf("application/zip")
+        ) { path, uri ->
+          Log.d(TAG, "Zip export scanned: $path -> $uri")
+        }
+
+        promise.resolve(
+          mapOf(
+            "path" to zipFile.absolutePath,
+            "name" to zipFile.name,
+            "size" to zipFile.length(),
+            "success" to true
+          )
+        )
+      } catch (e: Exception) {
+        Log.e(TAG, "createZipExport failed: ${e.message}", e)
+        promise.reject("ZIP_EXPORT_FAILED", e.message, e)
       }
     }
   }
