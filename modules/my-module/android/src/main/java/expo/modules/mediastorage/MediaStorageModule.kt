@@ -9,17 +9,34 @@ import androidx.core.content.FileProvider
 import expo.modules.kotlin.Promise
 import expo.modules.kotlin.modules.Module
 import expo.modules.kotlin.modules.ModuleDefinition
+import okhttp3.MediaType.Companion.toMediaTypeOrNull
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import okhttp3.RequestBody
+import okhttp3.Protocol
+import okio.BufferedSink
+import okio.source
 import java.io.BufferedInputStream
 import java.io.BufferedOutputStream
 import java.io.File
 import java.io.FileInputStream
 import java.io.FileOutputStream
 import java.io.InputStream
+import java.util.concurrent.TimeUnit
 import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
 
 class MediaStorageModule : Module() {
   private val TAG = "MediaStorageModule"
+
+  // Google Drive Resumable Upload için optimize edilmiş OkHttpClient (Singleton)
+  private val client = OkHttpClient.Builder()
+    .protocols(listOf(Protocol.HTTP_2, Protocol.HTTP_1_1)) // HTTP/2 ile çoklu TCP akış optimizasyonu
+    .connectTimeout(30, TimeUnit.SECONDS)
+    .writeTimeout(5, TimeUnit.MINUTES)
+    .readTimeout(60, TimeUnit.SECONDS)
+    .retryOnConnectionFailure(true)
+    .build()
 
   private fun getMimeType(file: File): String {
     val extension = file.extension.lowercase()
@@ -41,7 +58,7 @@ class MediaStorageModule : Module() {
   override fun definition() = ModuleDefinition {
     Name("MediaStorage")
 
-    // Returns the base path: Android/media/com.burakaydogan.AstorKayit/AstorKayit
+    // Base dizini döner: Android/media/com.burakaydogan.AstorKayit/AstorKayit
     Function("getMediaBasePath") {
       val context = appContext.reactContext ?: return@Function null
       val mediaDirs = context.externalMediaDirs
@@ -52,11 +69,7 @@ class MediaStorageModule : Module() {
       return@Function null
     }
 
-    // Initialize the directory structure:
-    // Android/media/com.burakaydogan.AstorKayit/AstorKayit/
-    //   ├── Files/
-    //   ├── Database/
-    //   └── Backups/
+    // Gerekli klasör hiyerarşisini oluşturur
     AsyncFunction("initializeDirectories") {
       val context = appContext.reactContext
         ?: throw Exception("React context is not available")
@@ -90,7 +103,7 @@ class MediaStorageModule : Module() {
       )
     }
 
-    // Create a text file at the given relative path under the base directory
+    // Metin dosyası oluşturur ve MediaStore indeksini yeniler
     AsyncFunction("createFile") { relativePath: String, content: String ->
       val context = appContext.reactContext
         ?: throw Exception("React context is not available")
@@ -102,14 +115,11 @@ class MediaStorageModule : Module() {
       val basePath = File(mediaDirs[0], "AstorKayit")
       val file = File(basePath, relativePath)
 
-      // Ensure parent directory exists
       file.parentFile?.mkdirs()
-
       file.writeText(content)
 
       val mimeType = getMimeType(file)
 
-      // Scan file with MediaScannerConnection so it's indexed immediately
       try {
         MediaScannerConnection.scanFile(
           context.applicationContext,
@@ -128,7 +138,7 @@ class MediaStorageModule : Module() {
       )
     }
 
-    // Save/copy a media file (image, video, etc.) from a URI to relative path under base directory
+    // Medya dosyasını hedef klasöre kopyalar ve MediaScanner'a bildirir
     AsyncFunction("saveMediaFile") { sourceUriString: String, relativeDestinationPath: String, promise: Promise ->
       try {
         val context = appContext.reactContext
@@ -141,7 +151,6 @@ class MediaStorageModule : Module() {
         val basePath = File(mediaDirs[0], "AstorKayit")
         val destFile = File(basePath, relativeDestinationPath)
 
-        // Ensure parent directory exists
         destFile.parentFile?.mkdirs()
 
         val uri = Uri.parse(sourceUriString)
@@ -163,14 +172,13 @@ class MediaStorageModule : Module() {
             try {
               output.fd.sync()
             } catch (e: Exception) {
-              // Ignore fd sync if not supported
+              // Görmezden gel
             }
           }
         }
 
         val mimeType = getMimeType(destFile)
 
-        // Trigger MediaScannerConnection and resolve promise once indexed
         MediaScannerConnection.scanFile(
           context.applicationContext,
           arrayOf(destFile.absolutePath),
@@ -193,7 +201,7 @@ class MediaStorageModule : Module() {
       }
     }
 
-    // Check if .nomedia exists in the given relative directory (e.g. "Files")
+    // .nomedia varlığını kontrol eder
     Function("hasNoMedia") { relativeDirectory: String ->
       val context = appContext.reactContext ?: return@Function false
       val mediaDirs = context.externalMediaDirs
@@ -205,7 +213,7 @@ class MediaStorageModule : Module() {
       return@Function noMediaFile.exists()
     }
 
-    // Explicitly create .nomedia in the given directory to hide files from Android gallery
+    // .nomedia dosyası oluşturur
     AsyncFunction("createNoMedia") { relativeDirectory: String, promise: Promise ->
       try {
         val context = appContext.reactContext
@@ -227,7 +235,6 @@ class MediaStorageModule : Module() {
           noMediaFile.createNewFile()
         }
 
-        // Scan the directory so gallery immediately hides all contents
         MediaScannerConnection.scanFile(
           context.applicationContext,
           arrayOf(noMediaFile.absolutePath, targetDir.absolutePath),
@@ -242,7 +249,7 @@ class MediaStorageModule : Module() {
       }
     }
 
-    // Explicitly remove .nomedia from the given directory and rescan all media files so they appear in gallery
+    // .nomedia dosyasını silip galeriyi yeniler
     AsyncFunction("removeNoMedia") { relativeDirectory: String, promise: Promise ->
       try {
         val context = appContext.reactContext
@@ -261,7 +268,6 @@ class MediaStorageModule : Module() {
           noMediaFile.delete()
         }
 
-        // Rescan all files (including subdirectories like record_*) so gallery immediately detects them
         val files = targetDir.walkTopDown().filter { it.isFile && it.name != ".nomedia" }.toList()
         if (files.isNotEmpty()) {
           val paths = files.map { it.absolutePath }.toTypedArray()
@@ -287,7 +293,7 @@ class MediaStorageModule : Module() {
       }
     }
 
-    // Explicitly scan a file or all files in a relative directory
+    // Belirli bir dosya/klasörü tarar
     AsyncFunction("scanFile") { relativeOrAbsolutePath: String, promise: Promise ->
       try {
         val context = appContext.reactContext
@@ -340,7 +346,7 @@ class MediaStorageModule : Module() {
       }
     }
 
-    // Delete a single file (.nomedia cannot be deleted with deleteFile; must use removeNoMedia)
+    // Tek bir dosya siler
     AsyncFunction("deleteFile") { relativeOrAbsolutePath: String ->
       val context = appContext.reactContext
         ?: throw Exception("React context is not available")
@@ -356,7 +362,6 @@ class MediaStorageModule : Module() {
         File(basePath, relativeOrAbsolutePath)
       }
 
-      // Prohibit deleting .nomedia via regular deleteFile
       if (targetFile.name == ".nomedia") {
         return@AsyncFunction false
       }
@@ -376,7 +381,7 @@ class MediaStorageModule : Module() {
               null
             )
           } catch (e: Exception) {
-            // Ignore
+            // Görmezden gel
           }
         }
         return@AsyncFunction deleted
@@ -384,7 +389,7 @@ class MediaStorageModule : Module() {
       return@AsyncFunction false
     }
 
-    // Delete a directory recursively (e.g. "Files/record_123") and scan all deleted files out of MediaStore
+    // Klasörü siler
     AsyncFunction("deleteDirectory") { relativeOrAbsolutePath: String, promise: Promise ->
       try {
         val context = appContext.reactContext
@@ -408,7 +413,6 @@ class MediaStorageModule : Module() {
         }
 
         val childFiles = targetDir.walkTopDown().filter { it.isFile }.map { it.absolutePath }.toList()
-
         val deleted = targetDir.deleteRecursively()
 
         if (deleted && childFiles.isNotEmpty()) {
@@ -427,7 +431,7 @@ class MediaStorageModule : Module() {
       }
     }
 
-    // List all files recursively in a relative directory
+    // Klasör altındaki dosyaları listeler
     AsyncFunction("listFiles") { relativePath: String ->
       val context = appContext.reactContext
         ?: throw Exception("React context is not available")
@@ -456,7 +460,7 @@ class MediaStorageModule : Module() {
         }.toList()
     }
 
-    // Check if a path exists
+    // Dosya/klasör varlığını kontrol eder
     Function("exists") { relativePath: String ->
       val context = appContext.reactContext ?: return@Function false
       val mediaDirs = context.externalMediaDirs
@@ -469,7 +473,7 @@ class MediaStorageModule : Module() {
       return@Function file.exists()
     }
 
-    // Share one or more media files along with title and message via native Android Intent
+    // Paylaşım menüsü açar
     AsyncFunction("shareMediaFiles") { filePaths: List<String>, title: String?, message: String?, promise: Promise ->
       try {
         val context = appContext.reactContext
@@ -535,7 +539,7 @@ class MediaStorageModule : Module() {
       }
     }
 
-    // Create a ZIP export containing HTML viewer, JSON metadata, and requested record folders
+    // Native ZIP arşivi oluşturur
     AsyncFunction("createZipExport") { zipRelativePath: String, htmlContent: String, jsonContent: String, folderRelativePaths: List<String>, promise: Promise ->
       try {
         val context = appContext.reactContext
@@ -548,7 +552,6 @@ class MediaStorageModule : Module() {
         val basePath = File(mediaDirs[0], "AstorKayit")
         val zipFile = File(basePath, zipRelativePath)
 
-        // Ensure parent directory (e.g. Backups) exists
         zipFile.parentFile?.mkdirs()
 
         if (zipFile.exists()) {
@@ -560,7 +563,7 @@ class MediaStorageModule : Module() {
         FileOutputStream(zipFile).use { fos ->
           BufferedOutputStream(fos).use { bos ->
             ZipOutputStream(bos).use { zos ->
-              // 1. Add index.html inside root folder
+              // 1. index.html ekle
               if (htmlContent.isNotEmpty()) {
                 val htmlEntry = ZipEntry("${rootPrefix}index.html")
                 zos.putNextEntry(htmlEntry)
@@ -568,7 +571,7 @@ class MediaStorageModule : Module() {
                 zos.closeEntry()
               }
 
-              // 2. Add records.json inside root folder
+              // 2. records.json ekle
               if (jsonContent.isNotEmpty()) {
                 val jsonEntry = ZipEntry("${rootPrefix}records.json")
                 zos.putNextEntry(jsonEntry)
@@ -576,7 +579,7 @@ class MediaStorageModule : Module() {
                 zos.closeEntry()
               }
 
-              // 3. Add each folder's files inside root folder
+              // 3. İlgili klasörlerin dosyalarını ekle
               for (relFolderPath in folderRelativePaths) {
                 val folder = File(basePath, relFolderPath)
                 if (folder.exists() && folder.isDirectory) {
@@ -600,7 +603,6 @@ class MediaStorageModule : Module() {
           }
         }
 
-        // Scan the generated zip file with MediaScannerConnection
         MediaScannerConnection.scanFile(
           context.applicationContext,
           arrayOf(zipFile.absolutePath),
@@ -623,6 +625,7 @@ class MediaStorageModule : Module() {
       }
     }
 
+    // Foreground Service Başlatma / Güncelleme / Durdurma
     AsyncFunction("startSyncForegroundService") { title: String, message: String, promise: Promise ->
       try {
         val context = appContext.reactContext ?: appContext.currentActivity ?: throw Exception("Context not found")
@@ -658,9 +661,9 @@ class MediaStorageModule : Module() {
 
     Events("onUploadProgress")
 
+    // OkHttp tabanlı yüksek hızlı Stream Upload
     AsyncFunction("nativeUploadFile") { uploadUrl: String, filePath: String, mimeType: String, promise: Promise ->
       Thread {
-        var connection: java.net.HttpURLConnection? = null
         try {
           val cleanPath = if (filePath.startsWith("file://")) filePath.substring(7) else filePath
           val file = File(cleanPath)
@@ -670,79 +673,74 @@ class MediaStorageModule : Module() {
           }
 
           val totalLength = file.length()
-          val url = java.net.URL(uploadUrl)
-          connection = (url.openConnection() as java.net.HttpURLConnection).apply {
-            requestMethod = "PUT"
-            doOutput = true
-            doInput = true
-            useCaches = false
-            connectTimeout = 30000
-            readTimeout = 60000
-            setRequestProperty("Content-Type", mimeType)
-            setRequestProperty("Content-Length", totalLength.toString())
-            setFixedLengthStreamingMode(totalLength)
-          }
-
           val context = appContext.reactContext ?: appContext.currentActivity
-          val buffer = ByteArray(128 * 1024) // 128 KB buffer for ultra-fast native throughput
-          var bytesUploaded: Long = 0
-          var lastUpdatePercent = -1
 
-          FileInputStream(file).use { fis ->
-            BufferedInputStream(fis, 128 * 1024).use { bis ->
-              connection.outputStream.use { os ->
-                BufferedOutputStream(os, 128 * 1024).use { bos ->
-                  var bytesRead: Int
-                  while (bis.read(buffer).also { bytesRead = it } != -1) {
-                    bos.write(buffer, 0, bytesRead)
-                    bytesUploaded += bytesRead
+          val requestBody = object : RequestBody() {
+            override fun contentType() = mimeType.toMediaTypeOrNull()
+            override fun contentLength() = totalLength
 
-                    val percent = if (totalLength > 0) ((bytesUploaded * 100) / totalLength).toInt() else 0
-                    if (percent != lastUpdatePercent && percent <= 100) {
-                      lastUpdatePercent = percent
-                      if (context != null) {
-                        SyncForegroundService.update(
-                          context,
-                          "Google Drive Yedekleme ☁️",
-                          "Google Drive'a yükleniyor (%$percent)...",
-                          percent,
-                          100
-                        )
-                      }
-                      sendEvent("onUploadProgress", mapOf(
-                        "percent" to percent,
-                        "bytesSent" to bytesUploaded,
-                        "totalBytes" to totalLength
-                      ))
+            override fun writeTo(sink: BufferedSink) {
+              val bufferSize = 64 * 1024 * 1024L // 64 MB Streaming Buffer
+              var bytesUploaded = 0L
+              var lastUpdatePercent = -1
+              var lastEventTime = 0L
+
+              file.source().use { source ->
+                while (bytesUploaded < totalLength) {
+                  val toRead = Math.min(bufferSize, totalLength - bytesUploaded)
+                  val read = source.read(sink.buffer, toRead)
+                  if (read == -1L) break
+                  sink.flush()
+                  bytesUploaded += read
+
+                  val percent = if (totalLength > 0) ((bytesUploaded * 100) / totalLength).toInt() else 0
+                  val now = System.currentTimeMillis()
+
+                  // 250ms throttling ile Foreground Service & JS event güncellemesi
+                  if ((percent != lastUpdatePercent && (now - lastEventTime > 250)) || percent == 100) {
+                    lastUpdatePercent = percent
+                    lastEventTime = now
+
+                    if (context != null) {
+                      SyncForegroundService.update(
+                        context,
+                        "Google Drive Yedekleme ☁️",
+                        "Google Drive'a yükleniyor (%$percent)...",
+                        percent,
+                        100
+                      )
                     }
+                    sendEvent("onUploadProgress", mapOf(
+                      "percent" to percent,
+                      "bytesSent" to bytesUploaded,
+                      "totalBytes" to totalLength
+                    ))
                   }
-                  bos.flush()
                 }
               }
             }
           }
 
-          val responseCode = connection.responseCode
-          val responseBody = if (responseCode in 200..299) {
-            connection.inputStream.bufferedReader().use { it.readText() }
-          } else {
-            connection.errorStream?.bufferedReader()?.use { it.readText() } ?: "HTTP $responseCode"
-          }
+          val request = Request.Builder()
+            .url(uploadUrl)
+            .put(requestBody)
+            .build()
 
-          if (responseCode in 200..299) {
-            promise.resolve(mapOf(
-              "success" to true,
-              "statusCode" to responseCode,
-              "body" to responseBody
-            ))
-          } else {
-            promise.reject("UPLOAD_FAILED", "HTTP $responseCode: $responseBody", null)
+          client.newCall(request).execute().use { response ->
+            val responseBody = response.body?.string() ?: ""
+            if (response.isSuccessful) {
+              promise.resolve(mapOf(
+                "success" to true,
+                "statusCode" to response.code,
+                "body" to responseBody
+              ))
+            } else {
+              promise.reject("UPLOAD_FAILED", "HTTP ${response.code}: $responseBody", null)
+            }
           }
         } catch (e: Exception) {
           Log.e(TAG, "nativeUploadFile failed: ${e.message}", e)
           promise.reject("UPLOAD_ERROR", e.message, e)
-        } finally {
-          connection?.disconnect()
         }
       }.start()
     }

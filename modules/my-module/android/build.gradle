@@ -6,6 +6,15 @@ plugins {
 group = 'expo.modules.mediastorage'
 version = '0.1.0'
 
+dependencies {
+  implementation project(':expo-modules-core')
+  implementation "org.jetbrains.kotlin:kotlin-stdlib-jdk7:$kotlinVersion"
+
+  // ⚡ Yüksek Hızlı HTTP/2 ve Stream Kütüphaneleri
+  implementation "com.squareup.okhttp3:okhttp:4.12.0"
+  implementation "com.squareup.okio:okio:3.9.0"
+}
+
 android {
   namespace "expo.modules.mediastorage"
   defaultConfig {

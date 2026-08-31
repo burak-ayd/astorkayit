@@ -492,18 +492,13 @@ async function fetchExistingFilesSet(
 }
 
 /**
-
- * Google Drive'a yerel medya/fotoğraf dosyasını doğrudan native stream ile yükler
-
+ * Fotoğraflar gibi küçük/orta ölçekli dosyaları tek istekte (Multipart) yükler.
+ * Resumable oturum açma gecikmesini (Round-trip) ortadan kaldırır.
  */
-
 export async function uploadMediaFileToDrive(
 	accessToken: string,
-
 	localFilePath: string,
-
 	fileName: string,
-
 	parentFolderId: string,
 ): Promise<void> {
 	const uri = localFilePath.startsWith("file://")
@@ -511,73 +506,37 @@ export async function uploadMediaFileToDrive(
 		: `file://${localFilePath}`;
 
 	let mimeType = "image/jpeg";
-
 	const lower = fileName.toLowerCase();
-
 	if (lower.endsWith(".png")) mimeType = "image/png";
 	else if (lower.endsWith(".webp")) mimeType = "image/webp";
 	else if (lower.endsWith(".mp4")) mimeType = "video/mp4";
 
-	// 1. Adım: Resumable Upload oturumu aç (Doğrudan hedef klasöre)
-
-	const initRes = await fetch(
-		"https://www.googleapis.com/upload/drive/v3/files?uploadType=resumable",
-
+	// Doğrudan Multipart Upload ile tek seferde yükleme
+	const uploadResult = await FileSystem.uploadAsync(
+		"https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart",
+		uri,
 		{
-			method: "POST",
-
+			httpMethod: "POST",
+			uploadType: FileSystem.FileSystemUploadType.MULTIPART,
+			fieldName: "media",
+			mimeType: mimeType,
 			headers: {
-				"Authorization": `Bearer ${accessToken}`,
-
-				"Content-Type": "application/json; charset=UTF-8",
+				Authorization: `Bearer ${accessToken}`,
 			},
-
-			body: JSON.stringify({
-				name: fileName,
-
-				parents: [parentFolderId],
-
-				mimeType,
-			}),
+			parameters: {
+				metadata: JSON.stringify({
+					name: fileName,
+					parents: [parentFolderId],
+					mimeType: mimeType,
+				}),
+			},
 		},
 	);
 
-	if (!initRes.ok) {
-		const err = await initRes.text();
-
-		throw new Error(`Oturum başlatılamadı (${fileName}): ${err}`);
-	}
-
-	const locationUrl =
-		initRes.headers.get("Location") || initRes.headers.get("location");
-
-	if (!locationUrl) {
-		throw new Error(`Yükleme adresi alınamadı (${fileName}).`);
-	}
-
-	// 2. Adım: Native seviyede dosyayı doğrudan Google Drive'a 128KB tamponla stream et
-
-	if (
-		MediaStorageModule &&
-		typeof MediaStorageModule.nativeUploadFile === "function"
-	) {
-		await MediaStorageModule.nativeUploadFile(locationUrl, uri, mimeType);
-	} else {
-		const uploadResult = await FileSystem.uploadAsync(locationUrl, uri, {
-			httpMethod: "PUT",
-
-			headers: {
-				"Content-Type": mimeType,
-			},
-
-			uploadType: FileSystem.FileSystemUploadType.BINARY_CONTENT,
-		});
-
-		if (uploadResult.status < 200 || uploadResult.status >= 300) {
-			throw new Error(
-				`Yükleme hatası (${fileName}): HTTP ${uploadResult.status}`,
-			);
-		}
+	if (uploadResult.status < 200 || uploadResult.status >= 300) {
+		throw new Error(
+			`Yükleme hatası (${fileName}): HTTP ${uploadResult.status} - ${uploadResult.body}`,
+		);
 	}
 }
 

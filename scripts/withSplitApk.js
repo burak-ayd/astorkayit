@@ -26,7 +26,7 @@ module.exports = function withSplitApk(config) {
         abi {
             enable ${isProdOrRelease}
             reset()
-            include "armeabi-v7a", "arm64-v8a", "x86", "x86_64"
+            include "arm64-v8a"
             universalApk false
         }
     }`,
@@ -39,7 +39,7 @@ module.exports = function withSplitApk(config) {
         abi {
             enable true
             reset()
-            include "armeabi-v7a", "arm64-v8a", "x86", "x86_64"
+            include  "arm64-v8a"
             universalApk false
         }
     }`,
