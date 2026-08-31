@@ -38,6 +38,9 @@ class MediaStorageModule : Module() {
     .retryOnConnectionFailure(true)
     .build()
 
+  @Volatile
+  private var activeCall: okhttp3.Call? = null
+
   private fun getMimeType(file: File): String {
     val extension = file.extension.lowercase()
     if (extension.isNotEmpty()) {
@@ -659,9 +662,25 @@ class MediaStorageModule : Module() {
       }
     }
 
+    // ⚡ Devam eden native upload işlemini anında iptal eder ve soketi kapatır
+    AsyncFunction("cancelNativeUpload") { promise: Promise ->
+      try {
+        activeCall?.cancel()
+        activeCall = null
+        val context = appContext.reactContext ?: appContext.currentActivity
+        if (context != null) {
+          SyncForegroundService.stop(context)
+        }
+        promise.resolve(true)
+      } catch (e: Exception) {
+        Log.e(TAG, "cancelNativeUpload failed: ${e.message}", e)
+        promise.resolve(false)
+      }
+    }
+
     Events("onUploadProgress")
 
-    // OkHttp tabanlı yüksek hızlı Stream Upload
+    // OkHttp tabanlı yüksek hızlı Stream Upload (İptal edilebilir)
     AsyncFunction("nativeUploadFile") { uploadUrl: String, filePath: String, mimeType: String, promise: Promise ->
       Thread {
         try {
@@ -687,6 +706,11 @@ class MediaStorageModule : Module() {
 
               file.source().use { source ->
                 while (bytesUploaded < totalLength) {
+                  // İptal kontrolü
+                  if (activeCall?.isCanceled() == true) {
+                    break
+                  }
+
                   val toRead = Math.min(bufferSize, totalLength - bytesUploaded)
                   val read = source.read(sink.buffer, toRead)
                   if (read == -1L) break
@@ -726,19 +750,33 @@ class MediaStorageModule : Module() {
             .put(requestBody)
             .build()
 
-          client.newCall(request).execute().use { response ->
-            val responseBody = response.body?.string() ?: ""
-            if (response.isSuccessful) {
-              promise.resolve(mapOf(
-                "success" to true,
-                "statusCode" to response.code,
-                "body" to responseBody
-              ))
+          val call = client.newCall(request)
+          activeCall = call
+
+          try {
+            call.execute().use { response ->
+              activeCall = null
+              val responseBody = response.body?.string() ?: ""
+              if (response.isSuccessful) {
+                promise.resolve(mapOf(
+                  "success" to true,
+                  "statusCode" to response.code,
+                  "body" to responseBody
+                ))
+              } else {
+                promise.reject("UPLOAD_FAILED", "HTTP ${response.code}: $responseBody", null)
+              }
+            }
+          } catch (e: Exception) {
+            activeCall = null
+            if (call.isCanceled()) {
+              promise.reject("CANCELLED", "Yükleme kullanıcı tarafından iptal edildi", null)
             } else {
-              promise.reject("UPLOAD_FAILED", "HTTP ${response.code}: $responseBody", null)
+              throw e
             }
           }
         } catch (e: Exception) {
+          activeCall = null
           Log.e(TAG, "nativeUploadFile failed: ${e.message}", e)
           promise.reject("UPLOAD_ERROR", e.message, e)
         }

@@ -16,6 +16,7 @@ import {
   registerBackgroundSyncTask,
   unregisterBackgroundSyncTask,
 } from '@/services/backgroundSyncService';
+import MediaStorageModule from '../../modules/my-module/src/MediaStorageModule';
 
 interface DriveState {
   isConnected: boolean;
@@ -31,6 +32,7 @@ interface DriveState {
   syncProgressPercent: number;
   lastSyncResult: SyncResult | null;
   clientId: string;
+  activeAbortController: AbortController | null;
 
   // Actions
   loadDriveSettings: () => Promise<void>;
@@ -42,6 +44,7 @@ interface DriveState {
   setSyncMode: (mode: 'zip' | 'folders') => Promise<void>;
   setClientId: (clientId: string) => Promise<void>;
   syncNow: (records: RecordItem[]) => Promise<SyncResult>;
+  cancelSync: () => Promise<void>;
   handleRecordDeleteSync: (recordTitle: string, recordId: number) => Promise<void>;
 }
 
@@ -59,6 +62,7 @@ export const useDriveStore = create<DriveState>((set, get) => ({
   syncProgressPercent: 0,
   lastSyncResult: null,
   clientId: '',
+  activeAbortController: null,
 
   loadDriveSettings: async () => {
     try {
@@ -217,22 +221,37 @@ export const useDriveStore = create<DriveState>((set, get) => ({
       return errRes;
     }
 
+    const abortController = new AbortController();
+
     try {
       set({
         isSyncing: true,
         syncStage: 'Yedekleme hazırlanıyor...',
         syncProgressPercent: 0,
+        activeAbortController: abortController,
       });
 
       const onProgress = (stage: string, progress: number, max: number) => {
+        if (abortController.signal.aborted) return;
         const percent = max > 0 ? Math.round((progress / max) * 100) : 0;
         set({ syncStage: stage, syncProgressPercent: Math.min(100, Math.max(0, percent)) });
       };
 
       const result =
         syncMode === 'zip'
-          ? await syncZipArchiveToDrive(accessToken, records, syncOnWifiOnly, onProgress)
-          : await syncAllRecordsToDrive(accessToken, records, syncOnWifiOnly, onProgress);
+          ? await syncZipArchiveToDrive(accessToken, records, syncOnWifiOnly, onProgress, abortController.signal)
+          : await syncAllRecordsToDrive(accessToken, records, syncOnWifiOnly, onProgress, abortController.signal);
+
+      if (abortController.signal.aborted) {
+        const cancelledRes: SyncResult = {
+          success: false,
+          uploadedCount: 0,
+          error: 'Eşitleme kullanıcı tarafından iptal edildi.',
+          syncedAt: new Date().toISOString(),
+        };
+        set({ lastSyncResult: cancelledRes });
+        return cancelledRes;
+      }
 
       if (result.success) {
         const now = new Date().toISOString();
@@ -250,39 +269,71 @@ export const useDriveStore = create<DriveState>((set, get) => ({
       } else {
         set({ lastSyncResult: result });
 
-        await sendTaskNotification({
-          title: 'Senkronizasyon Uyarısı ⚠️',
-          body: result.error || 'Yedekleme tamamlanamadı.',
-          alertTitle: 'Senkronizasyon Uyarısı',
-          alertMessage: result.error || 'Yedekleme tamamlanamadı.',
-          alertType: 'warning',
-          actionType: 'drive_sync',
-        });
+        if (!result.error?.includes('iptal')) {
+          await sendTaskNotification({
+            title: 'Senkronizasyon Uyarısı ⚠️',
+            body: result.error || 'Yedekleme tamamlanamadı.',
+            alertTitle: 'Senkronizasyon Uyarısı',
+            alertMessage: result.error || 'Yedekleme tamamlanamadı.',
+            alertType: 'warning',
+            actionType: 'drive_sync',
+          });
+        }
       }
 
       return result;
     } catch (e) {
+      const isCancelled = abortController.signal.aborted || String(e).includes('iptal');
       const errRes: SyncResult = {
         success: false,
         uploadedCount: 0,
-        error: String(e),
+        error: isCancelled ? 'Eşitleme kullanıcı tarafından iptal edildi.' : String(e),
         syncedAt: new Date().toISOString(),
       };
       set({ lastSyncResult: errRes });
 
-      await sendTaskNotification({
-        title: 'Senkronizasyon Hatası ❌',
-        body: String(e),
-        alertTitle: 'Senkronizasyon Hatası',
-        alertMessage: String(e),
-        alertType: 'danger',
-        actionType: 'drive_sync',
-      });
+      if (!isCancelled) {
+        await sendTaskNotification({
+          title: 'Senkronizasyon Hatası ❌',
+          body: String(e),
+          alertTitle: 'Senkronizasyon Hatası',
+          alertMessage: String(e),
+          alertType: 'danger',
+          actionType: 'drive_sync',
+        });
+      }
 
       return errRes;
     } finally {
-      set({ isSyncing: false, syncStage: null, syncProgressPercent: 0 });
+      set({ isSyncing: false, syncStage: null, syncProgressPercent: 0, activeAbortController: null });
     }
+  },
+
+  cancelSync: async () => {
+    const { activeAbortController } = get();
+    if (activeAbortController) {
+      activeAbortController.abort();
+    }
+    if (MediaStorageModule && typeof (MediaStorageModule as any).cancelNativeUpload === 'function') {
+      try {
+        await (MediaStorageModule as any).cancelNativeUpload();
+      } catch (e) {
+        console.warn('cancelNativeUpload error:', e);
+      }
+    }
+    if (MediaStorageModule && typeof (MediaStorageModule as any).stopSyncForegroundService === 'function') {
+      try {
+        await (MediaStorageModule as any).stopSyncForegroundService();
+      } catch (e) {
+        console.warn('stopSyncForegroundService error:', e);
+      }
+    }
+    set({
+      isSyncing: false,
+      syncStage: null,
+      syncProgressPercent: 0,
+      activeAbortController: null,
+    });
   },
 
   handleRecordDeleteSync: async (recordTitle: string, recordId: number) => {

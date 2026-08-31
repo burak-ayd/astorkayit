@@ -46,6 +46,7 @@ export function DriveSettingsSection({
 	const setSyncWifiOnly = useDriveStore((s) => s.setSyncWifiOnly);
 	const setDeletePolicy = useDriveStore((s) => s.setDeletePolicy);
 	const syncNow = useDriveStore((s) => s.syncNow);
+	const cancelSync = useDriveStore((s) => s.cancelSync);
 
 	const handleGoogleConnect = async () => {
 		try {
@@ -102,13 +103,23 @@ export function DriveSettingsSection({
 		}
 	};
 
+	const handleCancelSync = () => {
+		cancelSync();
+		// showAlert({
+		// 	title: "Eşitleme İptal Edildi",
+		// 	message: "Google Drive eşitleme işlemi durduruldu.",
+		// 	type: "warning",
+		// });
+	};
+
 	const formatSyncDate = (isoStr: string | null) => {
 		if (!isoStr) return "Henüz eşitlenmedi";
 		try {
 			const d = new Date(isoStr);
 			return d.toLocaleDateString("tr-TR", {
 				day: "numeric",
-				month: "short",
+				month: "long",
+				year: "numeric",
 				hour: "2-digit",
 				minute: "2-digit",
 			});
@@ -134,6 +145,7 @@ export function DriveSettingsSection({
 						<Image
 							source={{ uri: driveUser.picture }}
 							style={styles.profileAvatar}
+							contentFit="cover"
 						/>
 					) : (
 						<View
@@ -148,12 +160,13 @@ export function DriveSettingsSection({
 							/>
 						</View>
 					)}
+
 					<View style={styles.profileTextWrap}>
 						<ThemedText
 							type="smallBold"
 							numberOfLines={1}
 							style={styles.profileName}>
-							{driveUser.name}
+							{driveUser.name || "Google Hesabı"}
 						</ThemedText>
 						<ThemedText
 							type="small"
@@ -165,6 +178,7 @@ export function DriveSettingsSection({
 							{driveUser.email}
 						</ThemedText>
 					</View>
+
 					<Pressable
 						style={({ pressed }) => [
 							styles.logoutBtn,
@@ -192,38 +206,56 @@ export function DriveSettingsSection({
 							borderWidth: 1,
 						},
 					]}>
-					<View style={styles.syncBannerTexts}>
-						<ThemedText
-							type="small"
-							style={[
-								styles.syncBannerLabel,
-								{ color: theme.textSecondary },
-							]}>
-							Son Eşitleme:
-						</ThemedText>
-						<ThemedText
-							type="smallBold"
-							style={[
-								styles.syncBannerTime,
-								{ color: theme.primary },
-							]}>
-							{formatSyncDate(lastSyncTime)}
-						</ThemedText>
-					</View>
+					<View style={styles.syncBannerTopRow}>
+						<View style={styles.syncBannerTexts}>
+							<ThemedText
+								type="small"
+								style={[
+									styles.syncBannerLabel,
+									{ color: theme.textSecondary },
+								]}>
+								{isSyncing ? "Durum:" : "Son Eşitleme:"}
+							</ThemedText>
+							<ThemedText
+								type="smallBold"
+								style={[
+									styles.syncBannerTime,
+									{ color: theme.primary },
+								]}>
+								{isSyncing
+									? `${(syncStage || "Eşitleniyor...").replace(/\s*\(%\d+\)/g, "")} (%${syncProgressPercent})`
+									: formatSyncDate(lastSyncTime)}
+							</ThemedText>
+						</View>
 
-					<Pressable
-						style={({ pressed }) => [
-							styles.primarySyncBtn,
-							{ backgroundColor: theme.primary },
-							pressed && styles.buttonPressed,
-							isSyncing && styles.buttonDisabled,
-						]}
-						onPress={handleManualDriveSync}
-						disabled={isSyncing}>
 						{isSyncing ? (
-							<ActivityIndicator size="small" color="#ffffff" />
+							<Pressable
+								style={({ pressed }) => [
+									styles.cancelSyncBtn,
+									{
+										backgroundColor:
+											theme.danger || "#ef4444",
+									},
+									pressed && styles.buttonPressed,
+								]}
+								onPress={handleCancelSync}>
+								<MaterialIcons
+									name="close"
+									size={16}
+									color="#ffffff"
+								/>
+								<ThemedText style={styles.primarySyncBtnText}>
+									İptal Et
+								</ThemedText>
+							</Pressable>
 						) : (
-							<>
+							<Pressable
+								style={({ pressed }) => [
+									styles.primarySyncBtn,
+									{ backgroundColor: theme.primary },
+									pressed && styles.buttonPressed,
+								]}
+								onPress={handleManualDriveSync}>
 								<MaterialIcons
 									name="sync"
 									size={16}
@@ -232,62 +264,29 @@ export function DriveSettingsSection({
 								<ThemedText style={styles.primarySyncBtnText}>
 									Şimdi Eşitle
 								</ThemedText>
-							</>
+							</Pressable>
 						)}
-					</Pressable>
-				</View>
+					</View>
 
-				{/* Canlı İlerleme Çubuğu (WhatsApp Tarzı Aşamalar ve % Göstergesi) */}
-				{isSyncing && (
-					<View
-						style={[
-							styles.liveProgressCard,
-							{
-								backgroundColor: theme.card,
-								borderColor: theme.primary,
-							},
-						]}>
-						<View style={styles.liveProgressHeader}>
-							<View style={styles.liveProgressTitleRow}>
-								<ActivityIndicator
-									size="small"
-									color={theme.primary}
-								/>
-								<ThemedText
-									type="smallBold"
-									style={[
-										styles.liveProgressStageText,
-										{ color: theme.primary },
-									]}>
-									{syncStage || "Eşitleniyor..."}
-								</ThemedText>
-							</View>
-							<ThemedText
-								type="smallBold"
-								style={[
-									styles.liveProgressPercentText,
-									{ color: theme.primary },
-								]}>
-								%{syncProgressPercent}
-							</ThemedText>
-						</View>
+					{/* Seamless Integrated Progress Bar */}
+					{isSyncing && (
 						<View
 							style={[
-								styles.liveProgressBarTrack,
-								{ backgroundColor: theme.primaryMuted },
+								styles.bannerProgressTrack,
+								{ backgroundColor: theme.background },
 							]}>
 							<View
 								style={[
-									styles.liveProgressBarFill,
+									styles.bannerProgressFill,
 									{
-										width: `${Math.max(4, syncProgressPercent)}%`,
-										backgroundColor: theme.warning,
+										width: `${Math.max(4, Math.min(100, syncProgressPercent))}%`,
+										backgroundColor: theme.primary,
 									},
 								]}
 							/>
 						</View>
-					</View>
-				)}
+					)}
+				</View>
 
 				{/* Toggle Option Rows */}
 				<View style={styles.toggleGroup}>
@@ -598,15 +597,30 @@ const styles = StyleSheet.create({
 		fontWeight: "700",
 	},
 	syncBanner: {
-		flexDirection: "row",
-		alignItems: "center",
-		justifyContent: "space-between",
 		paddingHorizontal: Spacing.three,
 		paddingVertical: Spacing.two,
 		borderRadius: 14,
+		gap: 8,
+	},
+	syncBannerTopRow: {
+		flexDirection: "row",
+		alignItems: "center",
+		justifyContent: "space-between",
 	},
 	syncBannerTexts: {
+		flex: 1,
 		gap: 1,
+		marginRight: Spacing.two,
+	},
+	bannerProgressTrack: {
+		height: 4,
+		borderRadius: 2,
+		overflow: "hidden",
+		width: "100%",
+	},
+	bannerProgressFill: {
+		height: "100%",
+		borderRadius: 2,
 	},
 	syncBannerLabel: {
 		fontSize: 10,
@@ -616,6 +630,15 @@ const styles = StyleSheet.create({
 		fontSize: 12,
 	},
 	primarySyncBtn: {
+		flexDirection: "row",
+		alignItems: "center",
+		gap: 6,
+		paddingHorizontal: 12,
+		paddingVertical: 8,
+		borderRadius: 10,
+		elevation: 2,
+	},
+	cancelSyncBtn: {
 		flexDirection: "row",
 		alignItems: "center",
 		gap: 6,
@@ -704,40 +727,5 @@ const styles = StyleSheet.create({
 	modeCardDesc: {
 		fontSize: 10,
 		lineHeight: 14,
-	},
-	liveProgressCard: {
-		padding: Spacing.two,
-		borderRadius: 12,
-		borderWidth: 1,
-		gap: 8,
-		marginTop: Spacing.one,
-	},
-	liveProgressHeader: {
-		flexDirection: "row",
-		alignItems: "center",
-		justifyContent: "space-between",
-	},
-	liveProgressTitleRow: {
-		flexDirection: "row",
-		alignItems: "center",
-		gap: 8,
-		flex: 1,
-	},
-	liveProgressStageText: {
-		fontSize: 12,
-	},
-	liveProgressPercentText: {
-		fontSize: 12,
-		fontWeight: "700",
-	},
-	liveProgressBarTrack: {
-		height: 6,
-		borderRadius: 3,
-		overflow: "hidden",
-		width: "100%",
-	},
-	liveProgressBarFill: {
-		height: "100%",
-		borderRadius: 3,
 	},
 });

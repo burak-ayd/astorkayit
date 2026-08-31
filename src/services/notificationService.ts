@@ -27,6 +27,8 @@ export async function initNotifications() {
 			await Notifications.setNotificationChannelAsync("astor-tasks", {
 				name: "İşlem Bildirimleri",
 				importance: Notifications.AndroidImportance.HIGH,
+				description:
+					"Uygulama içinde yapılan işlemlerin sonucunu buradan takip edebilirsiniz.",
 				vibrationPattern: [0, 250, 250, 250],
 				lightColor: "#3B82F6",
 				enableVibrate: true,

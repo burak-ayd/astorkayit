@@ -552,11 +552,14 @@ async function runConcurrent<T>(
 	concurrency: number,
 
 	workerFn: (item: T) => Promise<void>,
+
+	abortSignal?: AbortSignal,
 ) {
 	let index = 0;
 
 	const workers = new Array(concurrency).fill(0).map(async () => {
 		while (index < items.length) {
+			if (abortSignal?.aborted) return;
 			const current = items[index++];
 
 			if (current !== undefined) {
@@ -652,6 +655,8 @@ export async function syncAllRecordsToDrive(
 	wifiOnly: boolean,
 
 	onProgress?: ProgressCallback,
+
+	abortSignal?: AbortSignal,
 ): Promise<SyncResult> {
 	const netCheck = await isNetworkAllowedForSync(wifiOnly);
 
@@ -663,6 +668,15 @@ export async function syncAllRecordsToDrive(
 
 			error: netCheck.reason,
 
+			syncedAt: new Date().toISOString(),
+		};
+	}
+
+	if (abortSignal?.aborted) {
+		return {
+			success: false,
+			uploadedCount: 0,
+			error: "Eşitleme kullanıcı tarafından iptal edildi.",
 			syncedAt: new Date().toISOString(),
 		};
 	}
@@ -835,7 +849,7 @@ export async function syncAllRecordsToDrive(
 					(completedCount / totalToUpload) * 100,
 				);
 
-				const stageMsg = `Fotoğraflar yükleniyor (${completedCount}/${totalToUpload}) (%${percent})`;
+				const stageMsg = `Fotoğraflar yükleniyor (${completedCount}/${totalToUpload})`;
 
 				onProgress?.(stageMsg, completedCount, totalToUpload);
 
@@ -863,14 +877,25 @@ export async function syncAllRecordsToDrive(
 			syncedAt: new Date().toISOString(),
 		};
 	} catch (error) {
-		console.error("Google Drive sync failed:", error);
+		const isCancelled =
+			abortSignal?.aborted ||
+			String(error).toLowerCase().includes("iptal");
+		if (isCancelled) {
+			console.log(
+				"ℹ️ [Drive Sync] Senkronizasyon kullanıcı tarafından iptal edildi.",
+			);
+		} else {
+			console.error("Google Drive sync failed:", error);
+		}
 
 		return {
 			success: false,
 
 			uploadedCount: 0,
 
-			error: String(error),
+			error: isCancelled
+				? "Eşitleme kullanıcı tarafından iptal edildi."
+				: String(error),
 
 			syncedAt: new Date().toISOString(),
 		};
@@ -901,6 +926,8 @@ export async function syncZipArchiveToDrive(
 	wifiOnly: boolean,
 
 	onProgress?: ProgressCallback,
+
+	abortSignal?: AbortSignal,
 ): Promise<SyncResult> {
 	const netCheck = await isNetworkAllowedForSync(wifiOnly);
 
@@ -912,6 +939,15 @@ export async function syncZipArchiveToDrive(
 
 			error: netCheck.reason,
 
+			syncedAt: new Date().toISOString(),
+		};
+	}
+
+	if (abortSignal?.aborted) {
+		return {
+			success: false,
+			uploadedCount: 0,
+			error: "Eşitleme kullanıcı tarafından iptal edildi.",
 			syncedAt: new Date().toISOString(),
 		};
 	}
@@ -936,6 +972,10 @@ export async function syncZipArchiveToDrive(
 
 			"Yedekleme hazırlanıyor...",
 		);
+
+		if (abortSignal?.aborted) {
+			throw new Error("Eşitleme kullanıcı tarafından iptal edildi.");
+		}
 
 		// 1. ZIP dosya adını tarih ve saat ile oluştur (Örn: AstorKayit_Yedek_31-08-2026_00-05.zip)
 
@@ -1066,9 +1106,11 @@ export async function syncZipArchiveToDrive(
 							Math.max(0, event.percent),
 						);
 
-						const stageMsg = `Google Drive'a yükleniyor (%${displayPercent})`;
-
-						onProgress?.(stageMsg, displayPercent, 100);
+						onProgress?.(
+							"Google Drive'a yükleniyor",
+							displayPercent,
+							100,
+						);
 					},
 				);
 			}
@@ -1113,9 +1155,11 @@ export async function syncZipArchiveToDrive(
 						Math.max(0, rawPercent),
 					);
 
-					const stageMsg = `Google Drive'a yükleniyor (%${displayPercent})`;
-
-					onProgress?.(stageMsg, displayPercent, 100);
+					onProgress?.(
+						"Google Drive'a yükleniyor",
+						displayPercent,
+						100,
+					);
 
 					if (MediaStorageModule) {
 						MediaStorageModule.updateSyncForegroundService(
@@ -1154,14 +1198,25 @@ export async function syncZipArchiveToDrive(
 			syncedAt: new Date().toISOString(),
 		};
 	} catch (error) {
-		console.error("Google Drive ZIP sync failed:", error);
+		const isCancelled =
+			abortSignal?.aborted ||
+			String(error).toLowerCase().includes("iptal");
+		if (isCancelled) {
+			console.log(
+				"ℹ️ [Drive Sync] Yükleme kullanıcı tarafından iptal edildi.",
+			);
+		} else {
+			console.error("Google Drive ZIP sync failed:", error);
+		}
 
 		return {
 			success: false,
 
 			uploadedCount: 0,
 
-			error: String(error),
+			error: isCancelled
+				? "Eşitleme kullanıcı tarafından iptal edildi."
+				: String(error),
 
 			syncedAt: new Date().toISOString(),
 		};

@@ -64,6 +64,7 @@ declare class MediaStorageModuleType extends NativeModule<{
     max: number
   ): Promise<boolean>;
   stopSyncForegroundService(): Promise<boolean>;
+  cancelNativeUpload(): Promise<boolean>;
   nativeUploadFile(
     uploadUrl: string,
     filePath: string,
