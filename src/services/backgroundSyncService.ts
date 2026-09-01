@@ -117,7 +117,7 @@ TaskManager.defineTask(DRIVE_BACKGROUND_SYNC_TASK, async () => {
 		if (autoSyncFreq === "daily") {
 			if (!shouldRunDailySync(lastSync)) {
 				console.log(
-					"⏳ [Drive Arka Plan Görevi] Atlandı: Günlük eşitleme zamanı (gece 00:05) henüz gelmedi.",
+					"⏳ [Drive Arka Plan Görevi] Atlandı: Günlük eşitleme zamanı (gece 03:00) henüz gelmedi.",
 				);
 				return BackgroundTask.BackgroundTaskResult.Success;
 			}

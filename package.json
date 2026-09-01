@@ -1,7 +1,7 @@
 {
   "name": "astorkayitapp",
   "main": "expo-router/entry",
-  "version": "1.0.6",
+  "version": "1.0.8",
   "dependencies": {
     "@react-native-community/datetimepicker": "9.1.0",
     "@react-native-vector-icons/material-icons": "^13.1.3",
