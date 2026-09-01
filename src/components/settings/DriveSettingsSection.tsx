@@ -31,11 +31,7 @@ export function DriveSettingsSection({
 	const driveUser = useDriveStore((s) => s.user);
 	const autoSyncEnabled = useDriveStore((s) => s.autoSyncEnabled);
 	const autoSyncFrequency = useDriveStore((s) => s.autoSyncFrequency);
-	const autoSyncCustomHours = useDriveStore((s) => s.autoSyncCustomHours);
 	const setAutoSyncFrequency = useDriveStore((s) => s.setAutoSyncFrequency);
-	const setAutoSyncCustomHours = useDriveStore(
-		(s) => s.setAutoSyncCustomHours,
-	);
 	const syncOnWifiOnly = useDriveStore((s) => s.syncOnWifiOnly);
 	const deleteFromDriveOnLocalDelete = useDriveStore(
 		(s) => s.deleteFromDriveOnLocalDelete,
@@ -328,10 +324,8 @@ export function DriveSettingsSection({
 									: autoSyncFrequency === "on_change"
 										? "Yeni anı eklendiğinde anında eşitlenir."
 										: autoSyncFrequency === "daily"
-											? "Günde 1 kez arka planda eşitlenir."
-											: autoSyncFrequency === "weekly"
-												? "Haftada 1 kez arka planda eşitlenir."
-												: `${autoSyncCustomHours} saatte bir arka planda eşitlenir.`}
+											? "Her gece saat 03:00'te otomatik eşitlenir."
+											: "Her Pazartesi gece saat 03:00'te otomatik eşitlenir."}
 							</ThemedText>
 						</View>
 						<Switch
@@ -369,7 +363,7 @@ export function DriveSettingsSection({
 										backgroundColor:
 											autoSyncFrequency === "on_change"
 												? theme.primaryMuted
-												: theme.surface,
+												: theme.backgroundElement,
 										borderColor:
 											autoSyncFrequency === "on_change"
 												? theme.primary
@@ -418,7 +412,7 @@ export function DriveSettingsSection({
 											backgroundColor:
 												autoSyncFrequency === "daily"
 													? theme.primaryMuted
-													: theme.surface,
+													: theme.backgroundElement,
 											borderColor:
 												autoSyncFrequency === "daily"
 													? theme.primary
@@ -454,7 +448,7 @@ export function DriveSettingsSection({
 											styles.frequencyCardDesc,
 											{ color: theme.textSecondary },
 										]}>
-										Her gece saat 03:00'te.
+										{"Her gece saat 03:00'te."}
 									</ThemedText>
 								</Pressable>
 
@@ -466,7 +460,7 @@ export function DriveSettingsSection({
 											backgroundColor:
 												autoSyncFrequency === "weekly"
 													? theme.primaryMuted
-													: theme.surface,
+													: theme.backgroundElement,
 											borderColor:
 												autoSyncFrequency === "weekly"
 													? theme.primary
@@ -502,7 +496,7 @@ export function DriveSettingsSection({
 											styles.frequencyCardDesc,
 											{ color: theme.textSecondary },
 										]}>
-										Her Pazartesi gece 03:00'te.
+										{"Her Pazartesi gece 03:00'te."}
 									</ThemedText>
 								</Pressable>
 							</View>
@@ -563,7 +557,7 @@ export function DriveSettingsSection({
 						</View>
 						<View style={styles.optionTextWrap}>
 							<ThemedText type="smallBold">
-								Silinenleri Drive'dan Sil
+								{"Silinenleri Drive'dan Sil"}
 							</ThemedText>
 							<ThemedText
 								type="small"

@@ -922,10 +922,6 @@ export async function syncAllRecordsToDrive(
 
 					completedCount++;
 
-					const percent = Math.round(
-						(completedCount / totalToUpload) * 100,
-					);
-
 					const stageMsg = `Fotoğraflar yükleniyor (${completedCount}/${totalToUpload})`;
 
 					onProgress?.(stageMsg, completedCount, totalToUpload);
