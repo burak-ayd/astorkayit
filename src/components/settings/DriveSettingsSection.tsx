@@ -30,6 +30,12 @@ export function DriveSettingsSection({
 	const isDriveConnected = useDriveStore((s) => s.isConnected);
 	const driveUser = useDriveStore((s) => s.user);
 	const autoSyncEnabled = useDriveStore((s) => s.autoSyncEnabled);
+	const autoSyncFrequency = useDriveStore((s) => s.autoSyncFrequency);
+	const autoSyncCustomHours = useDriveStore((s) => s.autoSyncCustomHours);
+	const setAutoSyncFrequency = useDriveStore((s) => s.setAutoSyncFrequency);
+	const setAutoSyncCustomHours = useDriveStore(
+		(s) => s.setAutoSyncCustomHours,
+	);
 	const syncOnWifiOnly = useDriveStore((s) => s.syncOnWifiOnly);
 	const deleteFromDriveOnLocalDelete = useDriveStore(
 		(s) => s.deleteFromDriveOnLocalDelete,
@@ -223,7 +229,11 @@ export function DriveSettingsSection({
 									{ color: theme.primary },
 								]}>
 								{isSyncing
-									? `${(syncStage || "Eşitleniyor...").replace(/\s*\(%\d+\)/g, "")} (%${syncProgressPercent})`
+									? syncProgressPercent > 0
+										? `${(syncStage || "Eşitleniyor...").replace(/\s*\(%\d+\)/g, "")} (%${syncProgressPercent})`
+										: (
+												syncStage || "Eşitleniyor..."
+											).replace(/\s*\(%\d+\)/g, "")
 									: formatSyncDate(lastSyncTime)}
 							</ThemedText>
 						</View>
@@ -269,7 +279,7 @@ export function DriveSettingsSection({
 					</View>
 
 					{/* Seamless Integrated Progress Bar */}
-					{isSyncing && (
+					{isSyncing && syncProgressPercent > 0 && (
 						<View
 							style={[
 								styles.bannerProgressTrack,
@@ -313,9 +323,15 @@ export function DriveSettingsSection({
 									styles.optionDesc,
 									{ color: theme.textSecondary },
 								]}>
-								{autoSyncEnabled
-									? "Yeni anılar anında Drive'a yüklenir."
-									: "Kapalı (Sadece manuel eşitleme)."}
+								{!autoSyncEnabled
+									? "Kapalı (Sadece manuel eşitleme)."
+									: autoSyncFrequency === "on_change"
+										? "Yeni anı eklendiğinde anında eşitlenir."
+										: autoSyncFrequency === "daily"
+											? "Günde 1 kez arka planda eşitlenir."
+											: autoSyncFrequency === "weekly"
+												? "Haftada 1 kez arka planda eşitlenir."
+												: `${autoSyncCustomHours} saatte bir arka planda eşitlenir.`}
 							</ThemedText>
 						</View>
 						<Switch
@@ -328,6 +344,170 @@ export function DriveSettingsSection({
 							thumbColor="#ffffff"
 						/>
 					</View>
+
+					{/* Auto Sync Frequency Sub-Section */}
+					{autoSyncEnabled && (
+						<View
+							style={[
+								styles.frequencyContainer,
+								{
+									backgroundColor: theme.background,
+									borderColor: theme.border,
+								},
+							]}>
+							<ThemedText
+								type="smallBold"
+								style={{ color: theme.text, marginBottom: 2 }}>
+								Eşitleme Sıklığı
+							</ThemedText>
+
+							{/* 1. Yeni Kayıtlardan Sonra (Varsayılan) */}
+							<Pressable
+								style={[
+									styles.frequencyCardWide,
+									{
+										backgroundColor:
+											autoSyncFrequency === "on_change"
+												? theme.primaryMuted
+												: theme.surface,
+										borderColor:
+											autoSyncFrequency === "on_change"
+												? theme.primary
+												: theme.border,
+									},
+								]}
+								onPress={() => setAutoSyncFrequency("on_change")}>
+								<View style={styles.frequencyCardHeader}>
+									<MaterialIcons
+										name="bolt"
+										size={18}
+										color={
+											autoSyncFrequency === "on_change"
+												? theme.primary
+												: theme.textSecondary
+										}
+									/>
+									<ThemedText
+										type="smallBold"
+										style={{
+											color:
+												autoSyncFrequency === "on_change"
+													? theme.primary
+													: theme.text,
+											fontSize: 12,
+										}}>
+										Yeni Kayıtlardan Sonra
+									</ThemedText>
+								</View>
+								<ThemedText
+									type="small"
+									style={[
+										styles.frequencyCardDesc,
+										{ color: theme.textSecondary },
+									]}>
+									Yeni bir anı eklendiğinde veya güncellendiğinde anında eşitlenir (Önerilen).
+								</ThemedText>
+							</Pressable>
+
+							<View style={styles.frequencyGrid}>
+								{/* 2. Günlük (Gece 03:00) */}
+								<Pressable
+									style={[
+										styles.frequencyCard,
+										{
+											backgroundColor:
+												autoSyncFrequency === "daily"
+													? theme.primaryMuted
+													: theme.surface,
+											borderColor:
+												autoSyncFrequency === "daily"
+													? theme.primary
+													: theme.border,
+										},
+									]}
+									onPress={() => setAutoSyncFrequency("daily")}>
+									<View style={styles.frequencyCardHeader}>
+										<MaterialIcons
+											name="today"
+											size={16}
+											color={
+												autoSyncFrequency === "daily"
+													? theme.primary
+													: theme.textSecondary
+											}
+										/>
+										<ThemedText
+											type="smallBold"
+											style={{
+												color:
+													autoSyncFrequency === "daily"
+														? theme.primary
+														: theme.text,
+												fontSize: 11,
+											}}>
+											Günlük
+										</ThemedText>
+									</View>
+									<ThemedText
+										type="small"
+										style={[
+											styles.frequencyCardDesc,
+											{ color: theme.textSecondary },
+										]}>
+										Her gece saat 03:00'te.
+									</ThemedText>
+								</Pressable>
+
+								{/* 3. Haftalık (Pazartesi Gece 03:00) */}
+								<Pressable
+									style={[
+										styles.frequencyCard,
+										{
+											backgroundColor:
+												autoSyncFrequency === "weekly"
+													? theme.primaryMuted
+													: theme.surface,
+											borderColor:
+												autoSyncFrequency === "weekly"
+													? theme.primary
+													: theme.border,
+										},
+									]}
+									onPress={() => setAutoSyncFrequency("weekly")}>
+									<View style={styles.frequencyCardHeader}>
+										<MaterialIcons
+											name="date-range"
+											size={16}
+											color={
+												autoSyncFrequency === "weekly"
+													? theme.primary
+													: theme.textSecondary
+											}
+										/>
+										<ThemedText
+											type="smallBold"
+											style={{
+												color:
+													autoSyncFrequency === "weekly"
+														? theme.primary
+														: theme.text,
+												fontSize: 11,
+											}}>
+											Haftalık
+										</ThemedText>
+									</View>
+									<ThemedText
+										type="small"
+										style={[
+											styles.frequencyCardDesc,
+											{ color: theme.textSecondary },
+										]}>
+										Her Pazartesi gece 03:00'te.
+									</ThemedText>
+								</Pressable>
+							</View>
+						</View>
+					)}
 
 					{/* Wi-Fi Only */}
 					<View style={styles.optionRow}>
@@ -457,8 +637,8 @@ export function DriveSettingsSection({
 										styles.modeCardDesc,
 										{ color: theme.textSecondary },
 									]}>
-									WhatsApp tarzı tek parça ultra hızlı
-									yedekleme (Önerilen).
+									Tek bir zip dosya yüklenir. Yer yedekte tüm
+									kayıtlar baştan yedeklenir.
 								</ThemedText>
 							</Pressable>
 
@@ -505,7 +685,8 @@ export function DriveSettingsSection({
 										{ color: theme.textSecondary },
 									]}>
 									Drive üzerinde açık klasör ve dosyalar
-									halinde saklar.
+									halinde saklar. Sadece yeni eklenenler
+									yedeklenir.
 								</ThemedText>
 							</Pressable>
 						</View>
@@ -727,5 +908,38 @@ const styles = StyleSheet.create({
 	modeCardDesc: {
 		fontSize: 10,
 		lineHeight: 14,
+	},
+	frequencyContainer: {
+		padding: Spacing.two,
+		borderRadius: 12,
+		borderWidth: 1,
+		gap: 8,
+		marginTop: 2,
+	},
+	frequencyCardWide: {
+		padding: 10,
+		borderRadius: 10,
+		borderWidth: 1.5,
+		gap: 3,
+	},
+	frequencyGrid: {
+		flexDirection: "row",
+		gap: Spacing.two,
+	},
+	frequencyCard: {
+		flex: 1,
+		padding: 8,
+		borderRadius: 10,
+		borderWidth: 1.5,
+		gap: 3,
+	},
+	frequencyCardHeader: {
+		flexDirection: "row",
+		alignItems: "center",
+		gap: 4,
+	},
+	frequencyCardDesc: {
+		fontSize: 9.5,
+		lineHeight: 13,
 	},
 });

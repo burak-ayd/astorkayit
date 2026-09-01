@@ -52,9 +52,13 @@ export const useRecordStore = create<RecordStoreState>((set, get) => ({
       const id = await db.insertRecord(title, description, photoUris, isHidden);
       await get().loadRecords();
 
-      // Trigger auto-sync if enabled
+      // Trigger auto-sync if enabled and frequency is on_change
       const driveStore = useDriveStore.getState();
-      if (driveStore.isConnected && driveStore.autoSyncEnabled) {
+      if (
+        driveStore.isConnected &&
+        driveStore.autoSyncEnabled &&
+        driveStore.autoSyncFrequency === 'on_change'
+      ) {
         driveStore.syncNow(get().records).catch((e) => console.warn('Auto sync failed:', e));
       }
 
@@ -70,9 +74,13 @@ export const useRecordStore = create<RecordStoreState>((set, get) => ({
       await db.updateRecord(id, title, description, photoUris, isHidden);
       await get().loadRecords();
 
-      // Trigger auto-sync if enabled
+      // Trigger auto-sync if enabled and frequency is on_change
       const driveStore = useDriveStore.getState();
-      if (driveStore.isConnected && driveStore.autoSyncEnabled) {
+      if (
+        driveStore.isConnected &&
+        driveStore.autoSyncEnabled &&
+        driveStore.autoSyncFrequency === 'on_change'
+      ) {
         driveStore.syncNow(get().records).catch((e) => console.warn('Auto sync failed:', e));
       }
     } finally {
@@ -123,7 +131,7 @@ export const useRecordStore = create<RecordStoreState>((set, get) => ({
         if (record && driveStore.deleteFromDriveOnLocalDelete) {
           driveStore.handleRecordDeleteSync(record.title, record.id).catch(console.warn);
         }
-        if (driveStore.autoSyncEnabled) {
+        if (driveStore.autoSyncEnabled && driveStore.autoSyncFrequency === 'on_change') {
           driveStore.syncNow(get().records).catch(console.warn);
         }
       }
@@ -147,7 +155,7 @@ export const useRecordStore = create<RecordStoreState>((set, get) => ({
             driveStore.handleRecordDeleteSync(r.title, r.id).catch(console.warn);
           }
         }
-        if (driveStore.autoSyncEnabled) {
+        if (driveStore.autoSyncEnabled && driveStore.autoSyncFrequency === 'on_change') {
           driveStore.syncNow(get().records).catch(console.warn);
         }
       }

@@ -3,6 +3,8 @@ package expo.modules.mediastorage
 import android.content.Intent
 import android.media.MediaScannerConnection
 import android.net.Uri
+import android.os.Handler
+import android.os.Looper
 import android.util.Log
 import android.webkit.MimeTypeMap
 import androidx.core.content.FileProvider
@@ -15,6 +17,8 @@ import okhttp3.Request
 import okhttp3.RequestBody
 import okhttp3.Protocol
 import okio.BufferedSink
+import okio.ForwardingSink
+import okio.buffer
 import okio.source
 import java.io.BufferedInputStream
 import java.io.BufferedOutputStream
@@ -25,21 +29,75 @@ import java.io.InputStream
 import java.util.concurrent.TimeUnit
 import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
+import okhttp3.Interceptor
+import okhttp3.Response
+import java.net.InetSocketAddress
+import java.net.Socket
+import java.io.RandomAccessFile
+import javax.net.SocketFactory
+
+
+
+/** Gerçek transfer hızını logcat'e yazar — bir sonraki testte size kanıt verir */
+class SpeedLogInterceptor : Interceptor {
+    override fun intercept(chain: Interceptor.Chain): Response {
+        val request = chain.request()
+        val bodyLength = request.body?.contentLength() ?: -1
+        val start = System.nanoTime()
+        val response = chain.proceed(request)
+        val elapsedSec = (System.nanoTime() - start) / 1_000_000_000.0
+        if (bodyLength > 0 && elapsedSec > 0) {
+            val mbps = (bodyLength / 1024.0 / 1024.0) / elapsedSec
+            Log.d("MediaStorageModule", "Upload: ${bodyLength}B, ${"%.2f".format(elapsedSec)}s, ~${"%.2f".format(mbps)} MB/s, protokol=${response.protocol}")
+        }
+        return response
+    }
+}
 
 class MediaStorageModule : Module() {
   private val TAG = "MediaStorageModule"
 
+  companion object {
+    @Volatile
+    var instance: MediaStorageModule? = null
+
+    fun cancelFromNotification() {
+      instance?.performCancel(fromNotification = true)
+    }
+  }
+
   // Google Drive Resumable Upload için optimize edilmiş OkHttpClient (Singleton)
-  private val client = OkHttpClient.Builder()
-    .protocols(listOf(Protocol.HTTP_2, Protocol.HTTP_1_1)) // HTTP/2 ile çoklu TCP akış optimizasyonu
-    .connectTimeout(30, TimeUnit.SECONDS)
-    .writeTimeout(5, TimeUnit.MINUTES)
-    .readTimeout(60, TimeUnit.SECONDS)
-    .retryOnConnectionFailure(true)
-    .build()
+  // client tanımını bununla değiştirin:
+	private val client = OkHttpClient.Builder()
+		.connectTimeout(30, TimeUnit.SECONDS)
+		.writeTimeout(10, TimeUnit.MINUTES)
+		.readTimeout(60, TimeUnit.SECONDS)
+		.retryOnConnectionFailure(true)
+		.addNetworkInterceptor(SpeedLogInterceptor())
+		.build()
 
   @Volatile
   private var activeCall: okhttp3.Call? = null
+
+  @Volatile
+  private var isUploadCanceled: Boolean = false
+
+  fun performCancel(fromNotification: Boolean = false) {
+    isUploadCanceled = true
+    activeCall?.cancel()
+    activeCall = null
+    val context = appContext.reactContext ?: appContext.currentActivity
+    if (context != null) {
+      SyncForegroundService.stop(context)
+    }
+    if (fromNotification) {
+      try {
+        sendEvent("onSyncCancelled", mapOf("cancelled" to true))
+      } catch (e: Exception) {
+        Log.w(TAG, "sendEvent onSyncCancelled error: ${e.message}")
+      }
+    }
+  }
 
   private fun getMimeType(file: File): String {
     val extension = file.extension.lowercase()
@@ -60,6 +118,16 @@ class MediaStorageModule : Module() {
 
   override fun definition() = ModuleDefinition {
     Name("MediaStorage")
+
+    OnCreate {
+      instance = this@MediaStorageModule
+    }
+
+    OnDestroy {
+      if (instance == this@MediaStorageModule) {
+        instance = null
+      }
+    }
 
     // Base dizini döner: Android/media/com.burakaydogan.AstorKayit/AstorKayit
     Function("getMediaBasePath") {
@@ -590,6 +658,23 @@ class MediaStorageModule : Module() {
                   for (file in files) {
                     val entryRelativePath = file.relativeTo(basePath).path.replace('\\', '/')
                     val entry = ZipEntry("$rootPrefix$entryRelativePath")
+                    
+                    val ext = file.extension.lowercase()
+                    if (ext == "jpg" || ext == "jpeg" || ext == "png" || ext == "webp" || ext == "mp4" || ext == "mov") {
+                      entry.method = ZipEntry.STORED
+                      entry.size = file.length()
+                      entry.compressedSize = file.length()
+                      val crc = java.util.zip.CRC32()
+                      file.inputStream().use { input ->
+                        val buffer = ByteArray(8192)
+                        var length: Int
+                        while (input.read(buffer).also { length = it } >= 0) {
+                          crc.update(buffer, 0, length)
+                        }
+                      }
+                      entry.crc = crc.value
+                    }
+
                     zos.putNextEntry(entry)
                     FileInputStream(file).use { fis ->
                       BufferedInputStream(fis).use { bis ->
@@ -631,6 +716,7 @@ class MediaStorageModule : Module() {
     // Foreground Service Başlatma / Güncelleme / Durdurma
     AsyncFunction("startSyncForegroundService") { title: String, message: String, promise: Promise ->
       try {
+        isUploadCanceled = false
         val context = appContext.reactContext ?: appContext.currentActivity ?: throw Exception("Context not found")
         SyncForegroundService.start(context, title, message)
         promise.resolve(true)
@@ -665,12 +751,7 @@ class MediaStorageModule : Module() {
     // ⚡ Devam eden native upload işlemini anında iptal eder ve soketi kapatır
     AsyncFunction("cancelNativeUpload") { promise: Promise ->
       try {
-        activeCall?.cancel()
-        activeCall = null
-        val context = appContext.reactContext ?: appContext.currentActivity
-        if (context != null) {
-          SyncForegroundService.stop(context)
-        }
+        performCancel(fromNotification = false)
         promise.resolve(true)
       } catch (e: Exception) {
         Log.e(TAG, "cancelNativeUpload failed: ${e.message}", e)
@@ -678,11 +759,13 @@ class MediaStorageModule : Module() {
       }
     }
 
-    Events("onUploadProgress")
+    Events("onUploadProgress", "onSyncCancelled")
 
-    // OkHttp tabanlı yüksek hızlı Stream Upload (İptal edilebilir)
+    // Google Drive Resumable Upload (Chunked, Retries, Range, RandomAccessFile)
     AsyncFunction("nativeUploadFile") { uploadUrl: String, filePath: String, mimeType: String, promise: Promise ->
+      isUploadCanceled = false
       Thread {
+        android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_DEFAULT)
         try {
           val cleanPath = if (filePath.startsWith("file://")) filePath.substring(7) else filePath
           val file = File(cleanPath)
@@ -693,88 +776,177 @@ class MediaStorageModule : Module() {
 
           val totalLength = file.length()
           val context = appContext.reactContext ?: appContext.currentActivity
+          val chunkSize = 32L * 1024L * 1024L // 32 MB chunks
 
-          val requestBody = object : RequestBody() {
-            override fun contentType() = mimeType.toMediaTypeOrNull()
-            override fun contentLength() = totalLength
+          var currentOffset = 0L
+          var retries = 0
+          val maxRetries = 3
 
-            override fun writeTo(sink: BufferedSink) {
-              val bufferSize = 64 * 1024 * 1024L // 64 MB Streaming Buffer
-              var bytesUploaded = 0L
-              var lastUpdatePercent = -1
-              var lastEventTime = 0L
+          if (context != null) {
+            SyncForegroundService.update(
+              context,
+              "Google Drive Yedekleme ☁️",
+              "Google Drive'a yükleniyor (%0)...",
+              0,
+              100
+            )
+          }
 
-              file.source().use { source ->
-                while (bytesUploaded < totalLength) {
-                  // İptal kontrolü
-                  if (activeCall?.isCanceled() == true) {
-                    break
-                  }
+          val raf = RandomAccessFile(file, "r")
+          raf.use { randomAccessFile ->
+            while (currentOffset < totalLength) {
+              if (isUploadCanceled) {
+                promise.reject("CANCELLED", "Yükleme kullanıcı tarafından iptal edildi", null)
+                return@Thread
+              }
 
-                  val toRead = Math.min(bufferSize, totalLength - bytesUploaded)
-                  val read = source.read(sink.buffer, toRead)
-                  if (read == -1L) break
-                  sink.flush()
-                  bytesUploaded += read
+              val bytesLeft = totalLength - currentOffset
+              val bytesToUpload = if (bytesLeft < chunkSize) bytesLeft else chunkSize
+              val endOffset = currentOffset + bytesToUpload - 1
 
-                  val percent = if (totalLength > 0) ((bytesUploaded * 100) / totalLength).toInt() else 0
-                  val now = System.currentTimeMillis()
+              val requestBody = object : RequestBody() {
+                override fun contentType() = mimeType.toMediaTypeOrNull()
+                override fun contentLength() = bytesToUpload
 
-                  // 250ms throttling ile Foreground Service & JS event güncellemesi
-                  if ((percent != lastUpdatePercent && (now - lastEventTime > 250)) || percent == 100) {
-                    lastUpdatePercent = percent
-                    lastEventTime = now
+                override fun writeTo(sink: BufferedSink) {
+                  var bytesUploaded = 0L
+                  var lastUpdatePercent = -1
+                  var lastEventTime = 0L
 
-                    if (context != null) {
-                      SyncForegroundService.update(
-                        context,
-                        "Google Drive Yedekleme ☁️",
-                        "Google Drive'a yükleniyor (%$percent)...",
-                        percent,
-                        100
-                      )
+                  randomAccessFile.seek(currentOffset)
+
+                  val buffer = ByteArray(8192)
+                  var read: Int
+                  while (bytesUploaded < bytesToUpload) {
+                    if (isUploadCanceled) {
+                      throw java.io.IOException("Canceled by user")
                     }
-                    sendEvent("onUploadProgress", mapOf(
-                      "percent" to percent,
-                      "bytesSent" to bytesUploaded,
-                      "totalBytes" to totalLength
-                    ))
+                    val toRead = if (bytesToUpload - bytesUploaded < buffer.size) (bytesToUpload - bytesUploaded).toInt() else buffer.size
+                    read = randomAccessFile.read(buffer, 0, toRead)
+                    if (read == -1) break
+                    
+                    sink.write(buffer, 0, read)
+                    bytesUploaded += read
+
+                    val totalUploaded = currentOffset + bytesUploaded
+                    val percent = if (totalLength > 0) ((totalUploaded * 100) / totalLength).toInt() else 0
+                    val now = System.currentTimeMillis()
+
+                    if ((percent != lastUpdatePercent && (now - lastEventTime > 500)) || totalUploaded == totalLength) {
+                      lastUpdatePercent = percent
+                      lastEventTime = now
+
+                      Handler(Looper.getMainLooper()).post {
+                        if (context != null) {
+                          SyncForegroundService.update(
+                            context,
+                            "Google Drive Yedekleme ☁️",
+                            "Google Drive'a yükleniyor (%$percent)...",
+                            percent,
+                            100
+                          )
+                        }
+                        sendEvent("onUploadProgress", mapOf(
+                          "percent" to percent,
+                          "bytesSent" to totalUploaded,
+                          "totalBytes" to totalLength
+                        ))
+                      }
+                    }
                   }
+                  sink.flush()
                 }
               }
-            }
-          }
 
-          val request = Request.Builder()
-            .url(uploadUrl)
-            .put(requestBody)
-            .build()
+              val request = Request.Builder()
+                .url(uploadUrl)
+                .put(requestBody)
+                .addHeader("Content-Range", "bytes $currentOffset-$endOffset/$totalLength")
+                .build()
 
-          val call = client.newCall(request)
-          activeCall = call
+              val call = client.newCall(request)
+              activeCall = call
 
-          try {
-            call.execute().use { response ->
-              activeCall = null
-              val responseBody = response.body?.string() ?: ""
-              if (response.isSuccessful) {
-                promise.resolve(mapOf(
-                  "success" to true,
-                  "statusCode" to response.code,
-                  "body" to responseBody
-                ))
-              } else {
-                promise.reject("UPLOAD_FAILED", "HTTP ${response.code}: $responseBody", null)
+              try {
+                call.execute().use { response ->
+                  activeCall = null
+                  val responseBody = response.body?.string() ?: ""
+                  
+                  if (response.code == 308) {
+                    val rangeHeader = response.header("Range")
+                    if (rangeHeader != null && rangeHeader.startsWith("bytes=0-")) {
+                      val lastUploadedByte = rangeHeader.substring(8).toLongOrNull() ?: -1L
+                      currentOffset = lastUploadedByte + 1
+                    } else {
+                      currentOffset = 0L
+                    }
+                    retries = 0 // reset retries on progress
+                  } else if (response.isSuccessful) {
+                    promise.resolve(mapOf(
+                      "success" to true,
+                      "statusCode" to response.code,
+                      "body" to responseBody
+                    ))
+                    return@Thread
+                  } else {
+                    throw java.io.IOException("HTTP ${response.code}: $responseBody")
+                  }
+                }
+              } catch (e: Exception) {
+                activeCall = null
+                if (isUploadCanceled || e.message == "Canceled by user" || e.message?.contains("Canceled") == true || e.message?.contains("Socket closed") == true || e.message?.contains("Socket is closed") == true) {
+                    promise.reject("CANCELLED", "Yükleme kullanıcı tarafından iptal edildi", null)
+                    return@Thread
+                }
+                
+                retries++
+                if (retries > maxRetries) {
+                  promise.reject("UPLOAD_ERROR", "Max retries exceeded: ${e.message}", e)
+                  return@Thread
+                }
+                
+                Log.w(TAG, "Chunk upload failed, retrying ($retries/$maxRetries). Error: ${e.message}")
+                Thread.sleep((1000L * Math.pow(2.0, (retries - 1).toDouble())).toLong())
+                
+                // Query server for current status (308 resume query)
+                try {
+                  val emptyBody = object : RequestBody() {
+                    override fun contentType() = null
+                    override fun contentLength() = 0L
+                    override fun writeTo(sink: BufferedSink) {}
+                  }
+                  
+                  val statusRequest = Request.Builder()
+                    .url(uploadUrl)
+                    .put(emptyBody)
+                    .addHeader("Content-Range", "bytes */$totalLength")
+                    .build()
+                    
+                  val statusCall = client.newCall(statusRequest)
+                  activeCall = statusCall
+                  statusCall.execute().use { statusResponse ->
+                    activeCall = null
+                    if (statusResponse.code == 308) {
+                      val rangeHeader = statusResponse.header("Range")
+                      if (rangeHeader != null && rangeHeader.startsWith("bytes=0-")) {
+                        val lastUploadedByte = rangeHeader.substring(8).toLongOrNull() ?: -1L
+                        currentOffset = lastUploadedByte + 1
+                      } else {
+                        currentOffset = 0L // Start from beginning if server has nothing
+                      }
+                    } else if (statusResponse.isSuccessful) {
+                      promise.resolve(mapOf("success" to true, "statusCode" to statusResponse.code, "body" to (statusResponse.body?.string() ?: "")))
+                      return@Thread
+                    } else {
+                       throw java.io.IOException("Status check failed: HTTP ${statusResponse.code}")
+                    }
+                  }
+                } catch (statusException: Exception) {
+                  Log.e(TAG, "Status check failed: ${statusException.message}")
+                }
               }
-            }
-          } catch (e: Exception) {
-            activeCall = null
-            if (call.isCanceled()) {
-              promise.reject("CANCELLED", "Yükleme kullanıcı tarafından iptal edildi", null)
-            } else {
-              throw e
-            }
-          }
+            } // while end
+          } // raf use end
         } catch (e: Exception) {
           activeCall = null
           Log.e(TAG, "nativeUploadFile failed: ${e.message}", e)

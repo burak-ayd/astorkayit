@@ -1,352 +1,463 @@
-import { create } from 'zustand';
-import * as db from '@/database/db';
-import type { RecordItem } from '@/types';
+import * as db from "@/database/db";
 import {
-  authenticateWithGoogle,
-  deleteFileFromDrive,
-  getFreshAccessToken,
-  getOrCreateDriveFolder,
-  GoogleUser,
-  syncAllRecordsToDrive,
-  syncZipArchiveToDrive,
-  SyncResult,
-} from '@/services/googleDriveService';
-import { sendTaskNotification } from '@/services/notificationService';
+	registerBackgroundSyncTask,
+	unregisterBackgroundSyncTask,
+} from "@/services/backgroundSyncService";
 import {
-  registerBackgroundSyncTask,
-  unregisterBackgroundSyncTask,
-} from '@/services/backgroundSyncService';
-import MediaStorageModule from '../../modules/my-module/src/MediaStorageModule';
+	authenticateWithGoogle,
+	deleteFileFromDrive,
+	getFreshAccessToken,
+	getOrCreateDriveFolder,
+	GoogleUser,
+	syncAllRecordsToDrive,
+	SyncResult,
+	syncZipArchiveToDrive,
+} from "@/services/googleDriveService";
+import { sendTaskNotification } from "@/services/notificationService";
+import type { RecordItem } from "@/types";
+import { create } from "zustand";
+import MediaStorageModule from "../../modules/my-module/src/MediaStorageModule";
 
 interface DriveState {
-  isConnected: boolean;
-  user: GoogleUser | null;
-  accessToken: string | null;
-  autoSyncEnabled: boolean;
-  syncOnWifiOnly: boolean;
-  deleteFromDriveOnLocalDelete: boolean;
-  syncMode: 'zip' | 'folders';
-  lastSyncTime: string | null;
-  isSyncing: boolean;
-  syncStage: string | null;
-  syncProgressPercent: number;
-  lastSyncResult: SyncResult | null;
-  clientId: string;
-  activeAbortController: AbortController | null;
+	isConnected: boolean;
+	user: GoogleUser | null;
+	accessToken: string | null;
+	autoSyncEnabled: boolean;
+	autoSyncFrequency: "on_change" | "daily" | "weekly" | "custom";
+	autoSyncCustomHours: number;
+	syncOnWifiOnly: boolean;
+	deleteFromDriveOnLocalDelete: boolean;
+	syncMode: "zip" | "folders";
+	lastSyncTime: string | null;
+	isSyncing: boolean;
+	syncStage: string | null;
+	syncProgressPercent: number;
+	lastSyncResult: SyncResult | null;
+	clientId: string;
+	activeAbortController: AbortController | null;
 
-  // Actions
-  loadDriveSettings: () => Promise<void>;
-  connectWithGoogle: () => Promise<boolean>;
-  disconnect: () => Promise<void>;
-  setAutoSync: (enabled: boolean) => Promise<void>;
-  setSyncWifiOnly: (wifiOnly: boolean) => Promise<void>;
-  setDeletePolicy: (deleteOnLocalDelete: boolean) => Promise<void>;
-  setSyncMode: (mode: 'zip' | 'folders') => Promise<void>;
-  setClientId: (clientId: string) => Promise<void>;
-  syncNow: (records: RecordItem[]) => Promise<SyncResult>;
-  cancelSync: () => Promise<void>;
-  handleRecordDeleteSync: (recordTitle: string, recordId: number) => Promise<void>;
+	// Actions
+	loadDriveSettings: () => Promise<void>;
+	connectWithGoogle: () => Promise<boolean>;
+	disconnect: () => Promise<void>;
+	setAutoSync: (enabled: boolean) => Promise<void>;
+	setAutoSyncFrequency: (
+		frequency: "on_change" | "daily" | "weekly" | "custom",
+	) => Promise<void>;
+	setAutoSyncCustomHours: (hours: number) => Promise<void>;
+	setSyncWifiOnly: (wifiOnly: boolean) => Promise<void>;
+	setDeletePolicy: (deleteOnLocalDelete: boolean) => Promise<void>;
+	setSyncMode: (mode: "zip" | "folders") => Promise<void>;
+	setClientId: (clientId: string) => Promise<void>;
+	syncNow: (records: RecordItem[]) => Promise<SyncResult>;
+	cancelSync: () => Promise<void>;
+	handleRecordDeleteSync: (
+		recordTitle: string,
+		recordId: number,
+	) => Promise<void>;
 }
 
 export const useDriveStore = create<DriveState>((set, get) => ({
-  isConnected: false,
-  user: null,
-  accessToken: null,
-  autoSyncEnabled: false,
-  syncOnWifiOnly: true,
-  deleteFromDriveOnLocalDelete: false,
-  syncMode: 'zip',
-  lastSyncTime: null,
-  isSyncing: false,
-  syncStage: null,
-  syncProgressPercent: 0,
-  lastSyncResult: null,
-  clientId: '',
-  activeAbortController: null,
+	isConnected: false,
+	user: null,
+	accessToken: null,
+	autoSyncEnabled: false,
+	autoSyncFrequency: "on_change",
+	autoSyncCustomHours: 6,
+	syncOnWifiOnly: true,
+	deleteFromDriveOnLocalDelete: false,
+	syncMode: "folders",
+	lastSyncTime: null,
+	isSyncing: false,
+	syncStage: null,
+	syncProgressPercent: 0,
+	lastSyncResult: null,
+	clientId: "",
+	activeAbortController: null,
 
-  loadDriveSettings: async () => {
-    try {
-      const accessToken = await db.getSetting('gdrive_access_token');
-      const userEmail = await db.getSetting('gdrive_user_email');
-      const userName = await db.getSetting('gdrive_user_name');
-      const userPicture = await db.getSetting('gdrive_user_picture');
-      const autoSync = await db.getSetting('gdrive_auto_sync');
-      const wifiOnly = await db.getSetting('gdrive_wifi_only');
-      const deletePolicy = await db.getSetting('gdrive_delete_policy');
-      const savedSyncMode = await db.getSetting('gdrive_sync_mode');
-      const lastSync = await db.getSetting('gdrive_last_sync');
-      const customClientId = await db.getSetting('gdrive_client_id');
+	loadDriveSettings: async () => {
+		try {
+			const accessToken = await db.getSetting("gdrive_access_token");
+			const userEmail = await db.getSetting("gdrive_user_email");
+			const userName = await db.getSetting("gdrive_user_name");
+			const userPicture = await db.getSetting("gdrive_user_picture");
+			const autoSync = await db.getSetting("gdrive_auto_sync");
+			const autoSyncFreq = (await db.getSetting(
+				"gdrive_auto_sync_frequency",
+			)) as "on_change" | "daily" | "weekly" | "custom" | null;
+			const autoSyncCustomHours = parseInt(
+				(await db.getSetting("gdrive_auto_sync_custom_hours")) || "6",
+				10,
+			);
+			const wifiOnly = await db.getSetting("gdrive_wifi_only");
+			const deletePolicy = await db.getSetting("gdrive_delete_policy");
+			const savedSyncMode = await db.getSetting("gdrive_sync_mode");
+			const lastSync = await db.getSetting("gdrive_last_sync");
+			const customClientId = await db.getSetting("gdrive_client_id");
 
-      const isConnected = !!accessToken && !!userEmail;
-      const user = isConnected
-        ? {
-            id: 'google-user',
-            email: userEmail || '',
-            name: userName || userEmail || '',
-            picture: userPicture || undefined,
-          }
-        : null;
+			const isConnected = !!accessToken && !!userEmail;
+			const user = isConnected
+				? {
+						id: "google-user",
+						email: userEmail || "",
+						name: userName || userEmail || "",
+						picture: userPicture || undefined,
+					}
+				: null;
 
-      const isAutoSync = autoSync === '1';
-      set({
-        isConnected,
-        user,
-        accessToken,
-        autoSyncEnabled: isAutoSync,
-        syncOnWifiOnly: wifiOnly !== '0', // default true
-        deleteFromDriveOnLocalDelete: deletePolicy === '1',
-        syncMode: savedSyncMode === 'folders' ? 'folders' : 'zip',
-        lastSyncTime: lastSync || null,
-        clientId: customClientId || '',
-      });
+			const isAutoSync = autoSync === "1";
+			set({
+				isConnected,
+				user,
+				accessToken,
+				autoSyncEnabled: isAutoSync,
+				autoSyncFrequency: autoSyncFreq || "on_change",
+				autoSyncCustomHours: isNaN(autoSyncCustomHours) ? 6 : autoSyncCustomHours,
+				syncOnWifiOnly: wifiOnly !== "0", // default true
+				deleteFromDriveOnLocalDelete: deletePolicy === "1",
+				syncMode: savedSyncMode === "folders" ? "folders" : "zip",
+				lastSyncTime: lastSync || null,
+				clientId: customClientId || "",
+			});
 
-      if (isConnected && isAutoSync) {
-        await registerBackgroundSyncTask();
-      }
-    } catch (e) {
-      console.warn('Loading Drive settings failed:', e);
-    }
-  },
+			if (isConnected && isAutoSync && autoSyncFreq !== "on_change") {
+				await registerBackgroundSyncTask();
+			}
+		} catch (e) {
+			console.warn("⚠️ [Drive Ayarları] Ayarlar yüklenirken hata:", e);
+		}
+	},
 
-  connectWithGoogle: async () => {
-    try {
-      const { clientId } = get();
-      const authResult = await authenticateWithGoogle(clientId || undefined);
+	connectWithGoogle: async () => {
+		try {
+			const { clientId } = get();
+			const authResult = await authenticateWithGoogle(
+				clientId || undefined,
+			);
 
-      if (authResult) {
-        const { accessToken, user } = authResult;
+			if (authResult) {
+				const { accessToken, user } = authResult;
 
-        // Persist credentials
-        await db.setSetting('gdrive_access_token', accessToken);
-        await db.setSetting('gdrive_user_email', user.email);
-        await db.setSetting('gdrive_user_name', user.name);
-        if (user.picture) {
-          await db.setSetting('gdrive_user_picture', user.picture);
-        }
+				// Persist credentials
+				await db.setSetting("gdrive_access_token", accessToken);
+				await db.setSetting("gdrive_user_email", user.email);
+				await db.setSetting("gdrive_user_name", user.name);
+				if (user.picture) {
+					await db.setSetting("gdrive_user_picture", user.picture);
+				}
 
-        set({
-          isConnected: true,
-          accessToken,
-          user,
-        });
+				set({
+					isConnected: true,
+					accessToken,
+					user,
+				});
 
-        return true;
-      }
-      return false;
-    } catch (error) {
-      console.error('Google connect failed:', error);
-      return false;
-    }
-  },
+				return true;
+			}
+			return false;
+		} catch (error) {
+			console.error("❌ [Google Giriş] Google hesabı ile bağlantı başarısız:", error);
+			return false;
+		}
+	},
 
-  disconnect: async () => {
-    try {
-      await db.setSetting('gdrive_access_token', '');
-      await db.setSetting('gdrive_user_email', '');
-      await db.setSetting('gdrive_user_name', '');
-      await db.setSetting('gdrive_user_picture', '');
-      await db.setSetting('gdrive_auto_sync', '0');
-      await unregisterBackgroundSyncTask();
+	disconnect: async () => {
+		try {
+			await db.setSetting("gdrive_access_token", "");
+			await db.setSetting("gdrive_user_email", "");
+			await db.setSetting("gdrive_user_name", "");
+			await db.setSetting("gdrive_user_picture", "");
+			await db.setSetting("gdrive_auto_sync", "0");
+			await unregisterBackgroundSyncTask();
 
-      set({
-        isConnected: false,
-        accessToken: null,
-        user: null,
-        autoSyncEnabled: false,
-      });
-    } catch (e) {
-      console.warn('Google disconnect failed:', e);
-    }
-  },
+			set({
+				isConnected: false,
+				accessToken: null,
+				user: null,
+				autoSyncEnabled: false,
+			});
+		} catch (e) {
+			console.warn("⚠️ [Google Çıkış] Google bağlantısı kesilirken hata:", e);
+		}
+	},
 
-  setAutoSync: async (enabled: boolean) => {
-    set({ autoSyncEnabled: enabled });
-    await db.setSetting('gdrive_auto_sync', enabled ? '1' : '0');
-    if (enabled) {
-      await registerBackgroundSyncTask();
-    } else {
-      await unregisterBackgroundSyncTask();
-    }
-  },
+	setAutoSync: async (enabled: boolean) => {
+		set({ autoSyncEnabled: enabled });
+		await db.setSetting("gdrive_auto_sync", enabled ? "1" : "0");
+		const { autoSyncFrequency } = get();
+		if (enabled && autoSyncFrequency !== "on_change") {
+			await registerBackgroundSyncTask();
+		} else {
+			await unregisterBackgroundSyncTask();
+		}
+	},
 
-  setSyncWifiOnly: async (wifiOnly: boolean) => {
-    set({ syncOnWifiOnly: wifiOnly });
-    await db.setSetting('gdrive_wifi_only', wifiOnly ? '1' : '0');
-  },
+	setAutoSyncFrequency: async (
+		frequency: "on_change" | "daily" | "weekly" | "custom",
+	) => {
+		set({ autoSyncFrequency: frequency });
+		await db.setSetting("gdrive_auto_sync_frequency", frequency);
+		const { autoSyncEnabled } = get();
+		if (autoSyncEnabled && frequency !== "on_change") {
+			await registerBackgroundSyncTask();
+		} else if (frequency === "on_change") {
+			await unregisterBackgroundSyncTask();
+		}
+	},
 
-  setDeletePolicy: async (deleteOnLocalDelete: boolean) => {
-    set({ deleteFromDriveOnLocalDelete: deleteOnLocalDelete });
-    await db.setSetting('gdrive_delete_policy', deleteOnLocalDelete ? '1' : '0');
-  },
+	setAutoSyncCustomHours: async (hours: number) => {
+		const validHours = Math.max(1, Math.min(168, hours));
+		set({ autoSyncCustomHours: validHours });
+		await db.setSetting("gdrive_auto_sync_custom_hours", String(validHours));
+	},
 
-  setSyncMode: async (mode: 'zip' | 'folders') => {
-    set({ syncMode: mode });
-    await db.setSetting('gdrive_sync_mode', mode);
-  },
+	setSyncWifiOnly: async (wifiOnly: boolean) => {
+		set({ syncOnWifiOnly: wifiOnly });
+		await db.setSetting("gdrive_wifi_only", wifiOnly ? "1" : "0");
+	},
 
-  setClientId: async (clientId: string) => {
-    set({ clientId });
-    await db.setSetting('gdrive_client_id', clientId);
-  },
+	setDeletePolicy: async (deleteOnLocalDelete: boolean) => {
+		set({ deleteFromDriveOnLocalDelete: deleteOnLocalDelete });
+		await db.setSetting(
+			"gdrive_delete_policy",
+			deleteOnLocalDelete ? "1" : "0",
+		);
+	},
 
-  syncNow: async (records: RecordItem[]) => {
-    let { accessToken, isConnected, syncOnWifiOnly, syncMode } = get();
+	setSyncMode: async (mode: "zip" | "folders") => {
+		set({ syncMode: mode });
+		await db.setSetting("gdrive_sync_mode", mode);
+	},
 
-    if (!isConnected) {
-      const errRes: SyncResult = {
-        success: false,
-        uploadedCount: 0,
-        error: 'Google Drive hesabı bağlı değil.',
-        syncedAt: new Date().toISOString(),
-      };
-      set({ lastSyncResult: errRes });
-      return errRes;
-    }
+	setClientId: async (clientId: string) => {
+		set({ clientId });
+		await db.setSetting("gdrive_client_id", clientId);
+	},
 
-    // Google Play Services üzerinden taze token al
-    const freshToken = await getFreshAccessToken();
-    if (freshToken) {
-      accessToken = freshToken;
-      set({ accessToken: freshToken });
-    }
+	syncNow: async (records: RecordItem[]) => {
+		let { accessToken, isConnected, syncOnWifiOnly, syncMode } = get();
 
-    if (!accessToken) {
-      const errRes: SyncResult = {
-        success: false,
-        uploadedCount: 0,
-        error: 'Google Drive oturumu geçersiz veya erişim belirteci alınamadı. Lütfen tekrar giriş yapın.',
-        syncedAt: new Date().toISOString(),
-      };
-      set({ lastSyncResult: errRes });
-      return errRes;
-    }
+		if (!isConnected) {
+			const errRes: SyncResult = {
+				success: false,
+				uploadedCount: 0,
+				error: "Google Drive hesabı bağlı değil.",
+				syncedAt: new Date().toISOString(),
+			};
+			set({ lastSyncResult: errRes });
+			return errRes;
+		}
 
-    const abortController = new AbortController();
+		// Google Play Services üzerinden taze token al
+		const freshToken = await getFreshAccessToken();
+		if (freshToken) {
+			accessToken = freshToken;
+			set({ accessToken: freshToken });
+		}
 
-    try {
-      set({
-        isSyncing: true,
-        syncStage: 'Yedekleme hazırlanıyor...',
-        syncProgressPercent: 0,
-        activeAbortController: abortController,
-      });
+		if (!accessToken) {
+			const errRes: SyncResult = {
+				success: false,
+				uploadedCount: 0,
+				error: "Google Drive oturumu geçersiz veya erişim belirteci alınamadı. Lütfen tekrar giriş yapın.",
+				syncedAt: new Date().toISOString(),
+			};
+			set({ lastSyncResult: errRes });
+			return errRes;
+		}
 
-      const onProgress = (stage: string, progress: number, max: number) => {
-        if (abortController.signal.aborted) return;
-        const percent = max > 0 ? Math.round((progress / max) * 100) : 0;
-        set({ syncStage: stage, syncProgressPercent: Math.min(100, Math.max(0, percent)) });
-      };
+		const abortController = new AbortController();
 
-      const result =
-        syncMode === 'zip'
-          ? await syncZipArchiveToDrive(accessToken, records, syncOnWifiOnly, onProgress, abortController.signal)
-          : await syncAllRecordsToDrive(accessToken, records, syncOnWifiOnly, onProgress, abortController.signal);
+		try {
+			set({
+				isSyncing: true,
+				syncStage: "Yedekleme hazırlanıyor...",
+				syncProgressPercent: 0,
+				activeAbortController: abortController,
+			});
 
-      if (abortController.signal.aborted) {
-        const cancelledRes: SyncResult = {
-          success: false,
-          uploadedCount: 0,
-          error: 'Eşitleme kullanıcı tarafından iptal edildi.',
-          syncedAt: new Date().toISOString(),
-        };
-        set({ lastSyncResult: cancelledRes });
-        return cancelledRes;
-      }
+			const onProgress = (
+				stage: string,
+				progress: number,
+				max: number,
+			) => {
+				if (abortController.signal.aborted) return;
+				const percent =
+					max > 0 ? Math.round((progress / max) * 100) : 0;
+				set({
+					syncStage: stage,
+					syncProgressPercent: Math.min(100, Math.max(0, percent)),
+				});
+			};
 
-      if (result.success) {
-        const now = new Date().toISOString();
-        await db.setSetting('gdrive_last_sync', now);
-        set({ lastSyncTime: now, lastSyncResult: result });
+			const result =
+				syncMode === "zip"
+					? await syncZipArchiveToDrive(
+							accessToken,
+							records,
+							syncOnWifiOnly,
+							onProgress,
+							abortController.signal,
+						)
+					: await syncAllRecordsToDrive(
+							accessToken,
+							records,
+							syncOnWifiOnly,
+							onProgress,
+							abortController.signal,
+						);
 
-        await sendTaskNotification({
-          title: 'Google Drive Eşitlendi ☁️',
-          body: `${result.uploadedCount} adet anı kaydı ve tüm fotoğrafları Google Drive'a başarıyla yedeklendi.`,
-          alertTitle: 'Senkronizasyon Başarılı',
-          alertMessage: `${result.uploadedCount} adet kayıt ve fotoğrafları Google Drive ile başarıyla eşitlendi.`,
-          alertType: 'success',
-          actionType: 'drive_sync',
-        });
-      } else {
-        set({ lastSyncResult: result });
+			if (abortController.signal.aborted) {
+				const cancelledRes: SyncResult = {
+					success: false,
+					uploadedCount: 0,
+					error: "Eşitleme kullanıcı tarafından iptal edildi.",
+					syncedAt: new Date().toISOString(),
+				};
+				set({ lastSyncResult: cancelledRes });
+				return cancelledRes;
+			}
 
-        if (!result.error?.includes('iptal')) {
-          await sendTaskNotification({
-            title: 'Senkronizasyon Uyarısı ⚠️',
-            body: result.error || 'Yedekleme tamamlanamadı.',
-            alertTitle: 'Senkronizasyon Uyarısı',
-            alertMessage: result.error || 'Yedekleme tamamlanamadı.',
-            alertType: 'warning',
-            actionType: 'drive_sync',
-          });
-        }
-      }
+			if (result.success) {
+				const now = new Date().toISOString();
+				await db.setSetting("gdrive_last_sync", now);
+				set({ lastSyncTime: now, lastSyncResult: result });
 
-      return result;
-    } catch (e) {
-      const isCancelled = abortController.signal.aborted || String(e).includes('iptal');
-      const errRes: SyncResult = {
-        success: false,
-        uploadedCount: 0,
-        error: isCancelled ? 'Eşitleme kullanıcı tarafından iptal edildi.' : String(e),
-        syncedAt: new Date().toISOString(),
-      };
-      set({ lastSyncResult: errRes });
+				await sendTaskNotification({
+					title: "Google Drive Eşitlendi ☁️",
+					body: `${result.uploadedCount} adet anı kaydı ve tüm fotoğrafları Google Drive'a başarıyla yedeklendi.`,
+					alertTitle: "Senkronizasyon Başarılı",
+					alertMessage: `${result.uploadedCount} adet kayıt ve fotoğrafları Google Drive ile başarıyla eşitlendi.`,
+					alertType: "success",
+					actionType: "drive_sync",
+				});
+			} else {
+				set({ lastSyncResult: result });
 
-      if (!isCancelled) {
-        await sendTaskNotification({
-          title: 'Senkronizasyon Hatası ❌',
-          body: String(e),
-          alertTitle: 'Senkronizasyon Hatası',
-          alertMessage: String(e),
-          alertType: 'danger',
-          actionType: 'drive_sync',
-        });
-      }
+				if (!result.error?.includes("iptal")) {
+					await sendTaskNotification({
+						title: "Senkronizasyon Uyarısı ⚠️",
+						body: result.error || "Yedekleme tamamlanamadı.",
+						alertTitle: "Senkronizasyon Uyarısı",
+						alertMessage:
+							result.error || "Yedekleme tamamlanamadı.",
+						alertType: "warning",
+						actionType: "drive_sync",
+					});
+				}
+			}
 
-      return errRes;
-    } finally {
-      set({ isSyncing: false, syncStage: null, syncProgressPercent: 0, activeAbortController: null });
-    }
-  },
+			return result;
+		} catch (e) {
+			const isCancelled =
+				abortController.signal.aborted || String(e).includes("iptal");
+			const errRes: SyncResult = {
+				success: false,
+				uploadedCount: 0,
+				error: isCancelled
+					? "Eşitleme kullanıcı tarafından iptal edildi."
+					: String(e),
+				syncedAt: new Date().toISOString(),
+			};
+			set({ lastSyncResult: errRes });
 
-  cancelSync: async () => {
-    const { activeAbortController } = get();
-    if (activeAbortController) {
-      activeAbortController.abort();
-    }
-    if (MediaStorageModule && typeof (MediaStorageModule as any).cancelNativeUpload === 'function') {
-      try {
-        await (MediaStorageModule as any).cancelNativeUpload();
-      } catch (e) {
-        console.warn('cancelNativeUpload error:', e);
-      }
-    }
-    if (MediaStorageModule && typeof (MediaStorageModule as any).stopSyncForegroundService === 'function') {
-      try {
-        await (MediaStorageModule as any).stopSyncForegroundService();
-      } catch (e) {
-        console.warn('stopSyncForegroundService error:', e);
-      }
-    }
-    set({
-      isSyncing: false,
-      syncStage: null,
-      syncProgressPercent: 0,
-      activeAbortController: null,
-    });
-  },
+			if (!isCancelled) {
+				await sendTaskNotification({
+					title: "Senkronizasyon Hatası ❌",
+					body: String(e),
+					alertTitle: "Senkronizasyon Hatası",
+					alertMessage: String(e),
+					alertType: "danger",
+					actionType: "drive_sync",
+				});
+			}
 
-  handleRecordDeleteSync: async (recordTitle: string, recordId: number) => {
-    const { isConnected, accessToken, deleteFromDriveOnLocalDelete } = get();
-    if (!isConnected || !accessToken || !deleteFromDriveOnLocalDelete) return;
+			return errRes;
+		} finally {
+			set({
+				isSyncing: false,
+				syncStage: null,
+				syncProgressPercent: 0,
+				activeAbortController: null,
+			});
+		}
+	},
 
-    try {
-      const rootFolderId = await getOrCreateDriveFolder(accessToken, 'AstorKayit');
-      const filesFolderId = await getOrCreateDriveFolder(accessToken, 'Files', rootFolderId);
-      const folderName = db.getRecordFolderName(recordId, recordTitle);
-      await deleteFileFromDrive(accessToken, folderName, filesFolderId);
-    } catch (e) {
-      console.warn('Delete sync error:', e);
-    }
-  },
+	cancelSync: async () => {
+		const { activeAbortController, isSyncing } = get();
+		if (!isSyncing && !activeAbortController) return;
+
+		if (activeAbortController) {
+			activeAbortController.abort();
+		}
+		set({
+			isSyncing: false,
+			syncStage: null,
+			syncProgressPercent: 0,
+			activeAbortController: null,
+		});
+
+		if (
+			MediaStorageModule &&
+			typeof (MediaStorageModule as any).cancelNativeUpload === "function"
+		) {
+			try {
+				await (MediaStorageModule as any).cancelNativeUpload();
+			} catch (e) {
+				console.warn("⚠️ [Drive İptal] Native upload iptal hatası:", e);
+			}
+		}
+		if (
+			MediaStorageModule &&
+			typeof (MediaStorageModule as any).stopSyncForegroundService ===
+				"function"
+		) {
+			try {
+				await (MediaStorageModule as any).stopSyncForegroundService();
+			} catch (e) {
+				console.warn("⚠️ [Drive İptal] Foreground servis durdurma hatası:", e);
+			}
+		}
+	},
+
+	handleRecordDeleteSync: async (recordTitle: string, recordId: number) => {
+		const { isConnected, accessToken, deleteFromDriveOnLocalDelete } =
+			get();
+		if (!isConnected || !accessToken || !deleteFromDriveOnLocalDelete)
+			return;
+
+		try {
+			const rootFolderId = await getOrCreateDriveFolder(
+				accessToken,
+				"AstorKayit",
+			);
+			const filesFolderId = await getOrCreateDriveFolder(
+				accessToken,
+				"Files",
+				rootFolderId,
+			);
+			const folderName = db.getRecordFolderName(recordId, recordTitle);
+			await deleteFileFromDrive(accessToken, folderName, filesFolderId);
+		} catch (e) {
+			console.warn("⚠️ [Drive Silme] Uzak dosya silme hatası:", e);
+		}
+	},
 }));
+
+// Bildirim üzerinden gelen "İptal Et" aksiyonunu dinle
+if (
+	MediaStorageModule &&
+	typeof (MediaStorageModule as any).addListener === "function" &&
+	!(globalThis as any)._hasSyncCancelListener
+) {
+	(globalThis as any)._hasSyncCancelListener = true;
+	(MediaStorageModule as any).addListener("onSyncCancelled", () => {
+		const state = useDriveStore.getState();
+		if (state.isSyncing || state.activeAbortController) {
+			console.log(
+				'ℹ️ [Drive İptal] Bildirim çubuğundaki "İptal Et" butonuna basıldı. Senkronizasyon sonlandırılıyor...',
+			);
+			state.cancelSync();
+		}
+	});
+}

@@ -22,6 +22,7 @@ class SyncForegroundService : Service() {
         const val ACTION_START = "ACTION_START"
         const val ACTION_UPDATE = "ACTION_UPDATE"
         const val ACTION_STOP = "ACTION_STOP"
+        const val ACTION_CANCEL_SYNC = "ACTION_CANCEL_SYNC"
 
         const val EXTRA_TITLE = "EXTRA_TITLE"
         const val EXTRA_MESSAGE = "EXTRA_MESSAGE"
@@ -101,6 +102,11 @@ class SyncForegroundService : Service() {
                 stopForeground(STOP_FOREGROUND_REMOVE)
                 stopSelf()
             }
+            ACTION_CANCEL_SYNC -> {
+                MediaStorageModule.cancelFromNotification()
+                stopForeground(STOP_FOREGROUND_REMOVE)
+                stopSelf()
+            }
         }
 
         return START_NOT_STICKY
@@ -141,6 +147,18 @@ class SyncForegroundService : Service() {
             .setOngoing(true)
             .setOnlyAlertOnce(true)
             .setPriority(NotificationCompat.PRIORITY_LOW)
+            .setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE)
+
+        val cancelIntent = Intent(this, SyncForegroundService::class.java).apply {
+            action = ACTION_CANCEL_SYNC
+        }
+        val cancelPendingIntent = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            PendingIntent.getService(this, 1, cancelIntent, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
+        } else {
+            PendingIntent.getService(this, 1, cancelIntent, PendingIntent.FLAG_UPDATE_CURRENT)
+        }
+
+        builder.addAction(android.R.drawable.ic_menu_close_clear_cancel, "İptal Et", cancelPendingIntent)
 
         if (pendingIntent != null) {
             builder.setContentIntent(pendingIntent)
@@ -148,7 +166,7 @@ class SyncForegroundService : Service() {
 
         if (max > 0 && progress >= 0) {
             builder.setProgress(max, progress, false)
-        } else if (progress == -1 && max == -1) {
+        } else if ((progress == -1 && max == -1) || max <= 0) {
             builder.setProgress(0, 0, true) // Indeterminate progress
         }
 

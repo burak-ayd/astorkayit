@@ -251,7 +251,7 @@ export async function getOrCreateDriveFolder(
 		const errBody = await listRes.text();
 
 		console.error(
-			`Google Drive list files error (${folderName}):`,
+			`❌ [Drive Klasör Arama] Klasör sorgusu başarısız (${folderName}):`,
 			listRes.status,
 			errBody,
 		);
@@ -295,7 +295,7 @@ export async function getOrCreateDriveFolder(
 		const errBody = await createRes.text();
 
 		console.error(
-			`Google Drive create folder error (${folderName}):`,
+			`❌ [Drive Klasör Oluşturma] Klasör oluşturulamadı (${folderName}):`,
 			createRes.status,
 			errBody,
 		);
@@ -492,15 +492,19 @@ async function fetchExistingFilesSet(
 }
 
 /**
- * Fotoğraflar gibi küçük/orta ölçekli dosyaları tek istekte (Multipart) yükler.
- * Resumable oturum açma gecikmesini (Round-trip) ortadan kaldırır.
+ * Fotoğraflar ve videolar gibi medya dosyalarını Resumable Upload ile Google Drive'a yükler.
  */
 export async function uploadMediaFileToDrive(
 	accessToken: string,
 	localFilePath: string,
 	fileName: string,
 	parentFolderId: string,
+	abortSignal?: AbortSignal,
 ): Promise<void> {
+	if (abortSignal?.aborted) {
+		throw new Error("Eşitleme kullanıcı tarafından iptal edildi.");
+	}
+
 	const uri = localFilePath.startsWith("file://")
 		? localFilePath
 		: `file://${localFilePath}`;
@@ -511,27 +515,51 @@ export async function uploadMediaFileToDrive(
 	else if (lower.endsWith(".webp")) mimeType = "image/webp";
 	else if (lower.endsWith(".mp4")) mimeType = "video/mp4";
 
-	// Doğrudan Multipart Upload ile tek seferde yükleme
-	const uploadResult = await FileSystem.uploadAsync(
-		"https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart",
-		uri,
+	// 1. Google Drive Resumable Upload oturumu başlat
+	const sessionRes = await fetch(
+		"https://www.googleapis.com/upload/drive/v3/files?uploadType=resumable",
 		{
-			httpMethod: "POST",
-			uploadType: FileSystem.FileSystemUploadType.MULTIPART,
-			fieldName: "media",
-			mimeType: mimeType,
+			method: "POST",
+			signal: abortSignal,
 			headers: {
-				Authorization: `Bearer ${accessToken}`,
+				"Authorization": `Bearer ${accessToken}`,
+				"Content-Type": "application/json; charset=UTF-8",
 			},
-			parameters: {
-				metadata: JSON.stringify({
-					name: fileName,
-					parents: [parentFolderId],
-					mimeType: mimeType,
-				}),
-			},
+			body: JSON.stringify({
+				name: fileName,
+				parents: [parentFolderId],
+				mimeType: mimeType,
+			}),
 		},
 	);
+
+	if (!sessionRes.ok) {
+		const errText = await sessionRes.text();
+		throw new Error(
+			`Oturum açma hatası (${fileName}): HTTP ${sessionRes.status} - ${errText}`,
+		);
+	}
+
+	const uploadUrl =
+		sessionRes.headers.get("Location") ||
+		sessionRes.headers.get("location");
+
+	if (!uploadUrl) {
+		throw new Error(`Yükleme adresi alınamadı (${fileName})`);
+	}
+
+	if (abortSignal?.aborted) {
+		throw new Error("Eşitleme kullanıcı tarafından iptal edildi.");
+	}
+
+	// 2. Binary akış ile dosyayı yükle
+	const uploadResult = await FileSystem.uploadAsync(uploadUrl, uri, {
+		httpMethod: "PUT",
+		uploadType: FileSystem.FileSystemUploadType.BINARY_CONTENT,
+		headers: {
+			"Content-Type": mimeType,
+		},
+	});
 
 	if (uploadResult.status < 200 || uploadResult.status >= 300) {
 		throw new Error(
@@ -563,12 +591,17 @@ async function runConcurrent<T>(
 			const current = items[index++];
 
 			if (current !== undefined) {
+				if (abortSignal?.aborted) return;
 				await workerFn(current);
 			}
 		}
 	});
 
 	await Promise.all(workers);
+
+	if (abortSignal?.aborted) {
+		throw new Error("Eşitleme kullanıcı tarafından iptal edildi.");
+	}
 }
 
 /**
@@ -682,7 +715,7 @@ export async function syncAllRecordsToDrive(
 	}
 
 	try {
-		onProgress?.("Yedekleme hazırlanıyor...", 0, 100);
+		onProgress?.("Yedekleme hazırlanıyor...", 0, 0);
 
 		// Native Foreground Servisi başlat
 
@@ -696,7 +729,16 @@ export async function syncAllRecordsToDrive(
 
 		// 1. Ana 'AstorKayit' ve 'Files' klasörlerini bul veya oluştur
 
-		onProgress?.("Klasör yapısı kontrol ediliyor...", 5, 100);
+		onProgress?.("Klasör yapısı kontrol ediliyor...", 0, 0);
+
+		if (MediaStorageModule) {
+			await MediaStorageModule.updateSyncForegroundService(
+				"Google Drive Senkronizasyonu ☁️",
+				"Klasör yapısı kontrol ediliyor...",
+				-1,
+				-1,
+			);
+		}
 
 		const rootFolderId = await getOrCreateDriveFolder(
 			accessToken,
@@ -714,7 +756,16 @@ export async function syncAllRecordsToDrive(
 
 		// 2. 'index.html' ve 'records.json' yükle/güncelle (Paralel 2 istek)
 
-		onProgress?.("HTML ve Veritabanı eşitleniyor...", 10, 100);
+		onProgress?.("HTML ve Veritabanı eşitleniyor...", 0, 0);
+
+		if (MediaStorageModule) {
+			await MediaStorageModule.updateSyncForegroundService(
+				"Google Drive Senkronizasyonu ☁️",
+				"HTML ve Veritabanı eşitleniyor...",
+				-1,
+				-1,
+			);
+		}
 
 		const htmlContent = generateExportHtml(
 			records,
@@ -754,12 +805,23 @@ export async function syncAllRecordsToDrive(
 
 		// 4. Tüm kayıt klasörlerini ve dosya listelerini eşzamanlı (Paralel) olarak tespit et
 
-		onProgress?.("Dosya listesi taranıyor...", 15, 100);
+		onProgress?.("Dosya listesi taranıyor...", 0, 0);
+
+		if (MediaStorageModule) {
+			await MediaStorageModule.updateSyncForegroundService(
+				"Google Drive Senkronizasyonu ☁️",
+				"Dosya listesi taranıyor...",
+				-1,
+				-1,
+			);
+		}
 
 		const tasksToUpload: PhotoUploadTask[] = [];
 
 		await Promise.all(
 			records.map(async (record) => {
+				if (abortSignal?.aborted) return;
+
 				const recordFolderName = getRecordFolderName(
 					record.id,
 					record.title,
@@ -768,6 +830,7 @@ export async function syncAllRecordsToDrive(
 				let recordFolderId = folderMap.get(recordFolderName);
 
 				if (!recordFolderId) {
+					if (abortSignal?.aborted) return;
 					recordFolderId = await getOrCreateDriveFolder(
 						accessToken,
 
@@ -780,6 +843,7 @@ export async function syncAllRecordsToDrive(
 				}
 
 				if (record.photos && record.photos.length > 0) {
+					if (abortSignal?.aborted) return;
 					const existingFilesSet = await fetchExistingFilesSet(
 						accessToken,
 
@@ -787,7 +851,7 @@ export async function syncAllRecordsToDrive(
 					);
 
 					for (const photoPath of record.photos) {
-						if (!photoPath) continue;
+						if (!photoPath || abortSignal?.aborted) continue;
 
 						const parts = photoPath.split("/");
 
@@ -809,7 +873,11 @@ export async function syncAllRecordsToDrive(
 			}),
 		);
 
-		// 5. Fotoğrafları 5'ERLİ PARALEL AKIŞLA (Maksimum Bant Genişliği) yükle
+		if (abortSignal?.aborted) {
+			throw new Error("Eşitleme kullanıcı tarafından iptal edildi.");
+		}
+
+		// 5. Fotoğrafları 3'ERLİ PARALEL AKIŞLA yükle
 
 		const totalToUpload = tasksToUpload.length;
 
@@ -832,39 +900,50 @@ export async function syncAllRecordsToDrive(
 				);
 			}
 
-			await runConcurrent(tasksToUpload, 5, async (task) => {
-				await uploadMediaFileToDrive(
-					accessToken,
+			await runConcurrent(
+				tasksToUpload,
+				3,
+				async (task) => {
+					if (abortSignal?.aborted) return;
 
-					task.photoPath,
+					await uploadMediaFileToDrive(
+						accessToken,
 
-					task.fileName,
+						task.photoPath,
 
-					task.folderId,
-				);
+						task.fileName,
 
-				completedCount++;
+						task.folderId,
 
-				const percent = Math.round(
-					(completedCount / totalToUpload) * 100,
-				);
-
-				const stageMsg = `Fotoğraflar yükleniyor (${completedCount}/${totalToUpload})`;
-
-				onProgress?.(stageMsg, completedCount, totalToUpload);
-
-				if (MediaStorageModule) {
-					await MediaStorageModule.updateSyncForegroundService(
-						"Google Drive Senkronizasyonu ☁️",
-
-						stageMsg,
-
-						completedCount,
-
-						totalToUpload,
+						abortSignal,
 					);
-				}
-			});
+
+					if (abortSignal?.aborted) return;
+
+					completedCount++;
+
+					const percent = Math.round(
+						(completedCount / totalToUpload) * 100,
+					);
+
+					const stageMsg = `Fotoğraflar yükleniyor (${completedCount}/${totalToUpload})`;
+
+					onProgress?.(stageMsg, completedCount, totalToUpload);
+
+					if (MediaStorageModule) {
+						await MediaStorageModule.updateSyncForegroundService(
+							"Google Drive Senkronizasyonu ☁️",
+
+							stageMsg,
+
+							completedCount,
+
+							totalToUpload,
+						);
+					}
+				},
+				abortSignal,
+			);
 		}
 
 		onProgress?.("Yedekleme tamamlandı", 100, 100);
@@ -882,10 +961,10 @@ export async function syncAllRecordsToDrive(
 			String(error).toLowerCase().includes("iptal");
 		if (isCancelled) {
 			console.log(
-				"ℹ️ [Drive Sync] Senkronizasyon kullanıcı tarafından iptal edildi.",
+				"ℹ️ [Drive Senkronizasyonu] Klasör Ağacı eşitlemesi kullanıcı tarafından durduruldu.",
 			);
 		} else {
-			console.error("Google Drive sync failed:", error);
+			console.error("❌ [Drive Senkronizasyonu] Klasör Ağacı eşitleme hatası:", error);
 		}
 
 		return {
@@ -965,7 +1044,7 @@ export async function syncZipArchiveToDrive(
 	}
 
 	try {
-		onProgress?.("Yedekleme hazırlanıyor...", 0, 100);
+		onProgress?.("Yedekleme hazırlanıyor...", 0, 0);
 
 		await MediaStorageModule.startSyncForegroundService(
 			"Google Drive Yedekleme ☁️",
@@ -1003,7 +1082,16 @@ export async function syncZipArchiveToDrive(
 
 		// 2. Native ZIP sıkıştırma
 
-		onProgress?.("Arşiv paketi oluşturuluyor...", 10, 100);
+		onProgress?.("Arşiv paketi oluşturuluyor...", 0, 0);
+
+		if (MediaStorageModule) {
+			await MediaStorageModule.updateSyncForegroundService(
+				"Google Drive Yedekleme ☁️",
+				"Arşiv paketi oluşturuluyor...",
+				-1,
+				-1,
+			);
+		}
 
 		const zipResult = await MediaStorageModule.createZipExport(
 			zipRelativePath,
@@ -1019,7 +1107,7 @@ export async function syncZipArchiveToDrive(
 			throw new Error("ZIP arşivi oluşturulamadı.");
 		}
 
-		onProgress?.("Google Drive'a bağlanılıyor...", 15, 100);
+		onProgress?.("Google Drive'a bağlanılıyor...", 0, 0);
 
 		if (MediaStorageModule) {
 			await MediaStorageModule.updateSyncForegroundService(
@@ -1027,45 +1115,70 @@ export async function syncZipArchiveToDrive(
 
 				"Google Drive'a bağlanılıyor...",
 
-				15,
+				-1,
 
-				100,
+				-1,
 			);
 		}
 
 		// 3. Drive ana klasörünü bul/oluştur
-
 		const rootFolderId = await getOrCreateDriveFolder(
 			accessToken,
-
 			"AstorKayit",
 		);
 
-		// 4. Resumable Upload oturumu başlat
-
-		onProgress?.("Yükleme oturumu başlatılıyor...", 20, 100);
-
-		const initRes = await fetch(
-			"https://www.googleapis.com/upload/drive/v3/files?uploadType=resumable",
-
+		// 3.5 Drive'da mevcut AstorKayit_Yedek.zip dosyasını ara
+		const q = encodeURIComponent(
+			`name = '${zipName}' and '${rootFolderId}' in parents and trashed = false`,
+		);
+		const checkRes = await fetch(
+			`https://www.googleapis.com/drive/v3/files?q=${q}&fields=files(id)`,
 			{
-				method: "POST",
-
-				headers: {
-					"Authorization": `Bearer ${accessToken}`,
-
-					"Content-Type": "application/json; charset=UTF-8",
-				},
-
-				body: JSON.stringify({
-					name: zipName,
-
-					parents: [rootFolderId],
-
-					mimeType: "application/zip",
-				}),
+				headers: { Authorization: `Bearer ${accessToken}` },
 			},
 		);
+		let existingFileId: string | null = null;
+		if (checkRes.ok) {
+			const data = await checkRes.json();
+			if (data.files && data.files.length > 0) {
+				existingFileId = data.files[0].id;
+			}
+		}
+
+		// 4. Resumable Upload oturumu başlat (Mevcutsa PATCH, yoksa POST)
+		onProgress?.("Yükleme oturumu başlatılıyor...", 0, 0);
+
+		if (MediaStorageModule) {
+			await MediaStorageModule.updateSyncForegroundService(
+				"Google Drive Yedekleme ☁️",
+				"Yükleme oturumu başlatılıyor...",
+				20,
+				100,
+			);
+		}
+
+		const initUrl = existingFileId
+			? `https://www.googleapis.com/upload/drive/v3/files/${existingFileId}?uploadType=resumable`
+			: "https://www.googleapis.com/upload/drive/v3/files?uploadType=resumable";
+
+		const initMethod = existingFileId ? "PATCH" : "POST";
+
+		const initBody = existingFileId
+			? {}
+			: {
+					name: zipName,
+					parents: [rootFolderId],
+					mimeType: "application/zip",
+				};
+
+		const initRes = await fetch(initUrl, {
+			method: initMethod,
+			headers: {
+				"Authorization": `Bearer ${accessToken}`,
+				"Content-Type": "application/json; charset=UTF-8",
+			},
+			body: JSON.stringify(initBody),
+		});
 
 		if (!initRes.ok) {
 			const err = await initRes.text();
@@ -1203,10 +1316,10 @@ export async function syncZipArchiveToDrive(
 			String(error).toLowerCase().includes("iptal");
 		if (isCancelled) {
 			console.log(
-				"ℹ️ [Drive Sync] Yükleme kullanıcı tarafından iptal edildi.",
+				"ℹ️ [Drive Senkronizasyonu] ZIP arşivi yüklemesi kullanıcı tarafından durduruldu.",
 			);
 		} else {
-			console.error("Google Drive ZIP sync failed:", error);
+			console.error("❌ [Drive Senkronizasyonu] ZIP arşivi yükleme hatası:", error);
 		}
 
 		return {
@@ -1225,7 +1338,7 @@ export async function syncZipArchiveToDrive(
 			try {
 				await MediaStorageModule.stopSyncForegroundService();
 			} catch (e) {
-				console.warn("Foreground service durdurulamadı:", e);
+				console.warn("⚠️ [Drive Bildirim Servisi] Foreground servis durdurulamadı:", e);
 			}
 		}
 	}
