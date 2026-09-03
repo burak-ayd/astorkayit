@@ -1,8 +1,10 @@
 import MaterialIcons from "@react-native-vector-icons/material-icons/static";
 import { Image } from "expo-image";
+import React, { useCallback, useEffect, useState } from "react";
 import {
 	ActivityIndicator,
 	Pressable,
+	ScrollView,
 	StyleSheet,
 	Switch,
 	View,
@@ -14,6 +16,11 @@ import { useTheme } from "@/hooks/use-theme";
 import { showAlert } from "@/store/useAlertStore";
 import { useDriveStore } from "@/store/useDriveStore";
 import { useRecordStore } from "@/store/useRecordStore";
+import {
+	type BackupStatus,
+	getBackupStatus,
+} from "@/services/backgroundSyncService";
+import { readLastLogs, clearLogs } from "@/services/backgroundLogger";
 
 interface DriveSettingsSectionProps {
 	isProcessing: boolean;
@@ -49,6 +56,31 @@ export function DriveSettingsSection({
 	const setDeletePolicy = useDriveStore((s) => s.setDeletePolicy);
 	const syncNow = useDriveStore((s) => s.syncNow);
 	const cancelSync = useDriveStore((s) => s.cancelSync);
+
+	// Bölüm 5: Yedekleme durumu uyarısı
+	const [backupStatus, setBackupStatus] = useState<BackupStatus | null>(
+		null,
+	);
+	const [showDebugLogs, setShowDebugLogs] = useState(false);
+	const [debugLogs, setDebugLogs] = useState("");
+
+	useEffect(() => {
+		if (isDriveConnected) {
+			getBackupStatus().then(setBackupStatus);
+		}
+	}, [isDriveConnected, lastSyncTime]);
+
+	const handleShowLogs = useCallback(async () => {
+		const logs = await readLastLogs(80);
+		setDebugLogs(logs);
+		setShowDebugLogs(true);
+	}, []);
+
+	const handleClearLogs = useCallback(async () => {
+		await clearLogs();
+		setDebugLogs("");
+		setShowDebugLogs(false);
+	}, []);
 
 	const handleGoogleConnect = async () => {
 		try {
@@ -686,6 +718,135 @@ export function DriveSettingsSection({
 						</View>
 					</View>
 				</View>
+
+				{/* Bölüm 5: Yedekleme Durumu Uyarısı */}
+				{backupStatus &&
+					(backupStatus.status === "stale" ||
+						backupStatus.status === "never") && (
+					<View
+						style={[
+							styles.staleWarningBanner,
+							{
+								backgroundColor: theme.warningMuted,
+								borderColor: theme.warning,
+							},
+						]}>
+						<View style={styles.staleWarningRow}>
+							<MaterialIcons
+								name="warning"
+								size={18}
+								color={theme.warning}
+							/>
+							<View style={{ flex: 1 }}>
+								<ThemedText
+									type="smallBold"
+									style={{ color: theme.warning }}>
+									{backupStatus.status === "never"
+										? "Henüz Yedeklenmedi"
+										: "Eski Yedekleme"}
+								</ThemedText>
+								<ThemedText
+									type="small"
+									style={{
+										color: theme.textSecondary,
+										fontSize: 11,
+									}}>
+									{backupStatus.message}
+								</ThemedText>
+							</View>
+							{!isSyncing && (
+								<Pressable
+									style={({ pressed }) => [
+										styles.staleWarningBtn,
+										{ backgroundColor: theme.warning },
+										pressed && styles.buttonPressed,
+									]}
+									onPress={handleManualDriveSync}>
+									<ThemedText
+										style={{
+											color: "#ffffff",
+											fontSize: 11,
+											fontWeight: "700",
+										}}>
+										Şimdi Yedekle
+									</ThemedText>
+								</Pressable>
+							)}
+						</View>
+					</View>
+				)}
+
+				{/* Bölüm 1: Debug Log Görüntüleyici */}
+				<Pressable
+					style={({ pressed }) => [
+						styles.debugLogBtn,
+						{
+							backgroundColor: theme.backgroundElement,
+							borderColor: theme.border,
+						},
+						pressed && styles.buttonPressed,
+					]}
+					onPress={showDebugLogs ? () => setShowDebugLogs(false) : handleShowLogs}>
+					<MaterialIcons
+						name="bug-report"
+						size={16}
+						color={theme.textSecondary}
+					/>
+					<ThemedText
+						type="small"
+						style={{ color: theme.textSecondary, fontSize: 11 }}>
+						{showDebugLogs
+							? "Logları Gizle"
+							: "Son Yedekleme Logları"}
+					</ThemedText>
+				</Pressable>
+
+				{showDebugLogs && (
+					<View
+						style={[
+							styles.debugLogContainer,
+							{
+								backgroundColor: theme.background,
+								borderColor: theme.border,
+							},
+						]}>
+						<View style={styles.debugLogHeader}>
+							<ThemedText
+								type="smallBold"
+								style={{ fontSize: 11 }}>
+								Arka Plan Görev Logları
+							</ThemedText>
+							<Pressable
+								onPress={handleClearLogs}
+								style={({ pressed }) => [
+									styles.debugClearBtn,
+									{ backgroundColor: theme.dangerMuted },
+									pressed && styles.buttonPressed,
+								]}>
+								<ThemedText
+									style={{
+										color: theme.danger,
+										fontSize: 10,
+										fontWeight: "700",
+									}}>
+									Temizle
+								</ThemedText>
+							</Pressable>
+						</View>
+						<ScrollView
+							style={styles.debugLogScroll}
+							nestedScrollEnabled>
+							<ThemedText
+								style={[
+									styles.debugLogText,
+									{ color: theme.textSecondary },
+								]}
+								selectable>
+								{debugLogs || "(Henüz log kaydı yok)"}
+							</ThemedText>
+						</ScrollView>
+					</View>
+				)}
 			</>
 		);
 	}
@@ -935,5 +1096,54 @@ const styles = StyleSheet.create({
 	frequencyCardDesc: {
 		fontSize: 9.5,
 		lineHeight: 13,
+	},
+	staleWarningBanner: {
+		paddingHorizontal: Spacing.three,
+		paddingVertical: Spacing.two,
+		borderRadius: 12,
+		borderWidth: 1,
+	},
+	staleWarningRow: {
+		flexDirection: "row",
+		alignItems: "center",
+		gap: Spacing.two,
+	},
+	staleWarningBtn: {
+		paddingHorizontal: 10,
+		paddingVertical: 5,
+		borderRadius: 8,
+	},
+	debugLogBtn: {
+		flexDirection: "row",
+		alignItems: "center",
+		gap: 6,
+		paddingHorizontal: Spacing.three,
+		paddingVertical: 8,
+		borderRadius: 10,
+		borderWidth: 1,
+	},
+	debugLogContainer: {
+		borderRadius: 12,
+		borderWidth: 1,
+		padding: Spacing.two,
+		gap: 6,
+	},
+	debugLogHeader: {
+		flexDirection: "row",
+		alignItems: "center",
+		justifyContent: "space-between",
+	},
+	debugClearBtn: {
+		paddingHorizontal: 8,
+		paddingVertical: 3,
+		borderRadius: 6,
+	},
+	debugLogScroll: {
+		maxHeight: 200,
+	},
+	debugLogText: {
+		fontFamily: "monospace",
+		fontSize: 9,
+		lineHeight: 14,
 	},
 });

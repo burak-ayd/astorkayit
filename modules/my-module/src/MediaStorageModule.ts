@@ -33,6 +33,11 @@ declare class MediaStorageModuleType extends NativeModule<{
   getMediaBasePath(): string | null;
   initializeDirectories(): Promise<InitResult>;
   createFile(relativePath: string, content: string): Promise<CreateFileResult>;
+  appendToFile(
+    relativePath: string,
+    content: string
+  ): Promise<{ path: string; size: number; success: boolean }>;
+  readTextFile(relativePath: string): Promise<string>;
   saveMediaFile(
     sourceUriString: string,
     relativeDestinationPath: string

@@ -16,6 +16,7 @@ import {
 } from "react-native-nitro-google-signin";
 
 import MediaStorageModule from "../../modules/my-module/src/MediaStorageModule";
+import { bgLog } from "@/services/backgroundLogger";
 
 // Drive API için gerekli izin kapsamı
 
@@ -682,25 +683,20 @@ export type ProgressCallback = (
 
 export async function syncAllRecordsToDrive(
 	accessToken: string,
-
 	records: RecordItem[],
-
 	wifiOnly: boolean,
-
 	onProgress?: ProgressCallback,
-
 	abortSignal?: AbortSignal,
+	isBackground: boolean = false,
 ): Promise<SyncResult> {
 	const netCheck = await isNetworkAllowedForSync(wifiOnly);
 
 	if (!netCheck.allowed) {
+		await bgLog("WARN", "network_check_failed", `Ağ uygun değil: ${netCheck.reason}`);
 		return {
 			success: false,
-
 			uploadedCount: 0,
-
 			error: netCheck.reason,
-
 			syncedAt: new Date().toISOString(),
 		};
 	}
@@ -717,21 +713,19 @@ export async function syncAllRecordsToDrive(
 	try {
 		onProgress?.("Yedekleme hazırlanıyor...", 0, 0);
 
-		// Native Foreground Servisi başlat
-
-		if (MediaStorageModule) {
+		// Native Foreground Servisi sadece foreground (kullanıcı tetiklediğinde) başlat
+		if (MediaStorageModule && !isBackground) {
 			await MediaStorageModule.startSyncForegroundService(
 				"Google Drive Senkronizasyonu ☁️",
-
 				"Yedekleme hazırlanıyor...",
 			);
 		}
 
 		// 1. Ana 'AstorKayit' ve 'Files' klasörlerini bul veya oluştur
-
 		onProgress?.("Klasör yapısı kontrol ediliyor...", 0, 0);
+		await bgLog("INFO", "drive_folder_check", "Drive klasör yapısı sorgulanıyor...");
 
-		if (MediaStorageModule) {
+		if (MediaStorageModule && !isBackground) {
 			await MediaStorageModule.updateSyncForegroundService(
 				"Google Drive Senkronizasyonu ☁️",
 				"Klasör yapısı kontrol ediliyor...",
@@ -742,23 +736,25 @@ export async function syncAllRecordsToDrive(
 
 		const rootFolderId = await getOrCreateDriveFolder(
 			accessToken,
-
 			"AstorKayit",
 		);
 
 		const filesFolderId = await getOrCreateDriveFolder(
 			accessToken,
-
 			"Files",
-
 			rootFolderId,
 		);
 
+		await bgLog("INFO", "drive_folders_ready", "Drive klasörleri hazır.", {
+			rootFolderId,
+			filesFolderId,
+		});
+
 		// 2. 'index.html' ve 'records.json' yükle/güncelle (Paralel 2 istek)
-
 		onProgress?.("HTML ve Veritabanı eşitleniyor...", 0, 0);
+		await bgLog("INFO", "metadata_upload", "index.html ve records.json yükleniyor...");
 
-		if (MediaStorageModule) {
+		if (MediaStorageModule && !isBackground) {
 			await MediaStorageModule.updateSyncForegroundService(
 				"Google Drive Senkronizasyonu ☁️",
 				"HTML ve Veritabanı eşitleniyor...",
@@ -769,45 +765,36 @@ export async function syncAllRecordsToDrive(
 
 		const htmlContent = generateExportHtml(
 			records,
-
 			`Astor Kayıt Arşivi (${records.length} Kayıt)`,
 		);
 
 		await Promise.all([
 			uploadTextFileToDrive(
 				accessToken,
-
 				"index.html",
-
 				"text/html",
-
 				htmlContent,
-
 				rootFolderId,
 			),
-
 			uploadTextFileToDrive(
 				accessToken,
-
 				"records.json",
-
 				"application/json",
-
 				JSON.stringify(records, null, 2),
-
 				rootFolderId,
 			),
 		]);
 
-		// 3. 'Files' klasörü altındaki mevcut tüm kayıt klasörlerini TEK SORGUDA önbelleğe al
+		await bgLog("INFO", "metadata_done", "index.html ve records.json başarıyla güncellendi.");
 
+		// 3. 'Files' klasörü altındaki mevcut tüm kayıt klasörlerini TEK SORGUDA önbelleğe al
 		const folderMap = await fetchFolderMap(accessToken, filesFolderId);
 
 		// 4. Tüm kayıt klasörlerini ve dosya listelerini eşzamanlı (Paralel) olarak tespit et
-
 		onProgress?.("Dosya listesi taranıyor...", 0, 0);
+		await bgLog("INFO", "files_scan_start", "Kayıt klasörleri taranıyor...");
 
-		if (MediaStorageModule) {
+		if (MediaStorageModule && !isBackground) {
 			await MediaStorageModule.updateSyncForegroundService(
 				"Google Drive Senkronizasyonu ☁️",
 				"Dosya listesi taranıyor...",
@@ -833,12 +820,9 @@ export async function syncAllRecordsToDrive(
 					if (abortSignal?.aborted) return;
 					recordFolderId = await getOrCreateDriveFolder(
 						accessToken,
-
 						recordFolderName,
-
 						filesFolderId,
 					);
-
 					folderMap.set(recordFolderName, recordFolderId);
 				}
 
@@ -846,25 +830,19 @@ export async function syncAllRecordsToDrive(
 					if (abortSignal?.aborted) return;
 					const existingFilesSet = await fetchExistingFilesSet(
 						accessToken,
-
 						recordFolderId,
 					);
 
 					for (const photoPath of record.photos) {
 						if (!photoPath || abortSignal?.aborted) continue;
-
 						const parts = photoPath.split("/");
-
 						const fileName = parts[parts.length - 1];
 
 						if (!existingFilesSet.has(fileName)) {
 							tasksToUpload.push({
 								photoPath,
-
 								fileName,
-
 								folderId: recordFolderId,
-
 								recordTitle: record.title,
 							});
 						}
@@ -878,24 +856,25 @@ export async function syncAllRecordsToDrive(
 		}
 
 		// 5. Fotoğrafları 3'ERLİ PARALEL AKIŞLA yükle
-
 		const totalToUpload = tasksToUpload.length;
-
 		let completedCount = 0;
+
+		await bgLog(
+			"INFO",
+			"files_scan_done",
+			`${totalToUpload} adet yeni fotoğraf yüklenecek.`,
+			{ totalToUpload },
+		);
 
 		if (totalToUpload > 0) {
 			const startStageMsg = `Google Drive'a yükleniyor (0/${totalToUpload})...`;
-
 			onProgress?.(startStageMsg, 0, totalToUpload);
 
-			if (MediaStorageModule) {
+			if (MediaStorageModule && !isBackground) {
 				await MediaStorageModule.updateSyncForegroundService(
 					"Google Drive Senkronizasyonu ☁️",
-
 					startStageMsg,
-
 					0,
-
 					totalToUpload,
 				);
 			}
@@ -906,15 +885,17 @@ export async function syncAllRecordsToDrive(
 				async (task) => {
 					if (abortSignal?.aborted) return;
 
+					await bgLog(
+						"INFO",
+						"upload_chunk_start",
+						`Fotoğraf yükleniyor: ${task.fileName} (${completedCount + 1}/${totalToUpload})`,
+					);
+
 					await uploadMediaFileToDrive(
 						accessToken,
-
 						task.photoPath,
-
 						task.fileName,
-
 						task.folderId,
-
 						abortSignal,
 					);
 
@@ -922,18 +903,20 @@ export async function syncAllRecordsToDrive(
 
 					completedCount++;
 
-					const stageMsg = `Fotoğraflar yükleniyor (${completedCount}/${totalToUpload})`;
+					await bgLog(
+						"INFO",
+						"upload_chunk_progress",
+						`Fotoğraf tamamlandı: ${task.fileName} (${completedCount}/${totalToUpload})`,
+					);
 
+					const stageMsg = `Fotoğraflar yükleniyor (${completedCount}/${totalToUpload})`;
 					onProgress?.(stageMsg, completedCount, totalToUpload);
 
-					if (MediaStorageModule) {
+					if (MediaStorageModule && !isBackground) {
 						await MediaStorageModule.updateSyncForegroundService(
 							"Google Drive Senkronizasyonu ☁️",
-
 							stageMsg,
-
 							completedCount,
-
 							totalToUpload,
 						);
 					}
@@ -946,9 +929,7 @@ export async function syncAllRecordsToDrive(
 
 		return {
 			success: true,
-
 			uploadedCount: records.length,
-
 			syncedAt: new Date().toISOString(),
 		};
 	} catch (error) {
@@ -965,17 +946,14 @@ export async function syncAllRecordsToDrive(
 
 		return {
 			success: false,
-
 			uploadedCount: 0,
-
 			error: isCancelled
 				? "Eşitleme kullanıcı tarafından iptal edildi."
 				: String(error),
-
 			syncedAt: new Date().toISOString(),
 		};
 	} finally {
-		if (MediaStorageModule) {
+		if (MediaStorageModule && !isBackground) {
 			try {
 				await MediaStorageModule.stopSyncForegroundService();
 			} catch (e) {
@@ -995,25 +973,20 @@ export async function syncAllRecordsToDrive(
 
 export async function syncZipArchiveToDrive(
 	accessToken: string,
-
 	records: RecordItem[],
-
 	wifiOnly: boolean,
-
 	onProgress?: ProgressCallback,
-
 	abortSignal?: AbortSignal,
+	isBackground: boolean = false,
 ): Promise<SyncResult> {
 	const netCheck = await isNetworkAllowedForSync(wifiOnly);
 
 	if (!netCheck.allowed) {
+		await bgLog("WARN", "network_check_failed", `Ağ uygun değil: ${netCheck.reason}`);
 		return {
 			success: false,
-
 			uploadedCount: 0,
-
 			error: netCheck.reason,
-
 			syncedAt: new Date().toISOString(),
 		};
 	}
@@ -1030,11 +1003,8 @@ export async function syncZipArchiveToDrive(
 	if (!MediaStorageModule) {
 		return {
 			success: false,
-
 			uploadedCount: 0,
-
 			error: "Native modül bulunamadı.",
-
 			syncedAt: new Date().toISOString(),
 		};
 	}
@@ -1042,11 +1012,12 @@ export async function syncZipArchiveToDrive(
 	try {
 		onProgress?.("Yedekleme hazırlanıyor...", 0, 0);
 
-		await MediaStorageModule.startSyncForegroundService(
-			"Google Drive Yedekleme ☁️",
-
-			"Yedekleme hazırlanıyor...",
-		);
+		if (MediaStorageModule && !isBackground) {
+			await MediaStorageModule.startSyncForegroundService(
+				"Google Drive Yedekleme ☁️",
+				"Yedekleme hazırlanıyor...",
+			);
+		}
 
 		if (abortSignal?.aborted) {
 			throw new Error("Eşitleme kullanıcı tarafından iptal edildi.");
@@ -1330,7 +1301,7 @@ export async function syncZipArchiveToDrive(
 			syncedAt: new Date().toISOString(),
 		};
 	} finally {
-		if (MediaStorageModule) {
+		if (MediaStorageModule && !isBackground) {
 			try {
 				await MediaStorageModule.stopSyncForegroundService();
 			} catch (e) {

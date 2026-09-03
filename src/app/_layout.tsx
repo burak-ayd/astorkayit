@@ -18,8 +18,13 @@ import {
   initNotifications,
   setupNotificationResponseListener,
 } from '@/services/notificationService';
-import '@/services/backgroundSyncService';
+import {
+  ensureBackgroundTaskRegistered,
+  checkAndRunFallbackSync,
+} from '@/services/backgroundSyncService';
 import 'expo-blob';
+import { useDriveStore } from '@/store/useDriveStore';
+import { showAlert } from '@/store/useAlertStore';
 
 export default function RootLayout() {
   const theme = useTheme();
@@ -42,6 +47,60 @@ export default function RootLayout() {
     const cleanup = setupNotificationResponseListener();
     return cleanup;
   }, []);
+
+  // Bölüm 1+3: Görev kaydını doğrula + kaynak etiketli foreground fallback
+  useEffect(() => {
+    if (!allPermissionsGranted) return;
+
+    const checkBackgroundTasks = async () => {
+      try {
+        // Görev kaydını doğrula (kaybolmuşsa yeniden kaydet, zinciri sıfırla)
+        await ensureBackgroundTaskRegistered();
+
+        // Fallback: son yedekleme durumuna göre aksiyon al
+        const fallback = await checkAndRunFallbackSync();
+        if (!fallback.needed) return;
+
+        const driveState = useDriveStore.getState();
+        if (!driveState.isConnected || driveState.isSyncing) return;
+
+        if (fallback.mode === 'auto') {
+          // 20-24 saat arası: sessizce foreground sync başlat
+          console.log(
+            `🔄 [Fallback Auto] Son yedekleme ${fallback.hoursSince} saat önce. Sessiz foreground sync.`,
+          );
+          const records = useRecordStore.getState().records;
+          await driveState.syncNow(records);
+        } else {
+          // prompt: kullanıcıya sor (24+ saat veya hiç sync yok)
+          const message =
+            fallback.hoursSince < 0
+              ? 'Henüz hiç yedekleme yapılmamış. Şimdi yedeklemek ister misiniz?'
+              : `Son yedeklemenizin üzerinden ${fallback.hoursSince} saatten fazla zaman geçti. Şimdi yedeklemek ister misiniz?`;
+
+          showAlert({
+            title: 'Yedekleme Hatırlatması',
+            message,
+            type: 'warning',
+            buttons: [
+              { text: 'Sonra', style: 'cancel' },
+              {
+                text: 'Şimdi Yedekle',
+                onPress: async () => {
+                  const records = useRecordStore.getState().records;
+                  await driveState.syncNow(records);
+                },
+              },
+            ],
+          });
+        }
+      } catch (e) {
+        console.warn('Arka plan görev kontrolü hatası:', e);
+      }
+    };
+
+    checkBackgroundTasks();
+  }, [allPermissionsGranted]);
 
   useEffect(() => {
     if (cameraPermission !== null && mediaPermission !== null) {

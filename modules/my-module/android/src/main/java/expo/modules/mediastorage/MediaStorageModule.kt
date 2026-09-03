@@ -153,7 +153,8 @@ class MediaStorageModule : Module() {
       val directories = listOf(
         File(basePath, "Files"),
         File(basePath, "Database"),
-        File(basePath, "Backups")
+        File(basePath, "Backups"),
+        File(basePath, "Log")
       )
 
       val results = mutableMapOf<String, Boolean>()
@@ -207,6 +208,47 @@ class MediaStorageModule : Module() {
         "path" to file.absolutePath,
         "success" to true
       )
+    }
+
+    // Dosyaya metin ekler (append) veya oluşturur - Loglama için ideal
+    AsyncFunction("appendToFile") { relativePath: String, content: String ->
+      val context = appContext.reactContext
+        ?: throw Exception("React context is not available")
+      val mediaDirs = context.externalMediaDirs
+      if (mediaDirs.isEmpty() || mediaDirs[0] == null) {
+        throw Exception("External media directory is not available")
+      }
+
+      val basePath = File(mediaDirs[0], "AstorKayit")
+      val file = File(basePath, relativePath)
+
+      file.parentFile?.mkdirs()
+      file.appendText(content)
+
+      return@AsyncFunction mapOf(
+        "path" to file.absolutePath,
+        "size" to file.length(),
+        "success" to true
+      )
+    }
+
+    // Metin dosyasını okur (Log okuma için)
+    AsyncFunction("readTextFile") { relativePath: String ->
+      val context = appContext.reactContext
+        ?: throw Exception("React context is not available")
+      val mediaDirs = context.externalMediaDirs
+      if (mediaDirs.isEmpty() || mediaDirs[0] == null) {
+        throw Exception("External media directory is not available")
+      }
+
+      val basePath = File(mediaDirs[0], "AstorKayit")
+      val file = File(basePath, relativePath)
+
+      if (!file.exists()) {
+        return@AsyncFunction ""
+      }
+
+      return@AsyncFunction file.readText()
     }
 
     // Medya dosyasını hedef klasöre kopyalar ve MediaScanner'a bildirir
